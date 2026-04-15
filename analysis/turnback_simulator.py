@@ -1313,7 +1313,7 @@ def optimize_turnback(
     Each dict contains: turn_direction, bank_angle, flap_strategy, flap_label,
     critical_altitude, turn_radius_ft, stall_speed_kt, overrun.
     """
-    from flight_physics import atmos
+    from engine.flight_physics import atmos
 
     results = []
 
