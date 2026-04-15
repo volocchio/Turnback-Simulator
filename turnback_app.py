@@ -37,8 +37,9 @@ def run_turnback_page():
     incomplete at low altitudes (crash before completing the turn) and complete
     above the **critical altitude** (safe return).
 
-    *Physics*: zero thrust, constant bank, gradient = −D / (n_z · W),
-    where n_z = 1/cos(φ).  Stall speed increases by √n_z in the turn.
+    *Physics*: zero thrust, constant bank, gradient = −D / W.
+    Bank increases drag via higher C_L = n_z·W/(q·S) where n_z = 1/cos(φ).
+    Stall speed increases by √n_z in the turn.
     """)
 
     # ── Sidebar inputs ──
