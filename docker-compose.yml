@@ -1,0 +1,13 @@
+services:
+  turnback:
+    build: .
+    container_name: turnback_simulator
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8510:8501"
+    command: >
+      streamlit run turnback_app.py
+      --server.address=0.0.0.0
+      --server.port=8501
+      --server.enableCORS=false
+      --server.enableXsrfProtection=false
