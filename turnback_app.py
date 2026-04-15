@@ -399,7 +399,7 @@ def run_turnback_page():
         # Build envelope for the best optimizer result so 3D/2D plots display
         if opt_results:
             best = opt_results[0]
-            from turnback_simulator import FLAP_STRATEGIES
+            from analysis.turnback_simulator import FLAP_STRATEGIES
             best_strat = FLAP_STRATEGIES.get(best['flap_strategy'], {})
             best_flap = best_strat.get('setting', 0) or 0
             best_flap_on_return = best_strat.get('on_return', False)
