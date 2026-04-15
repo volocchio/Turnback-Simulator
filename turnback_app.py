@@ -896,12 +896,37 @@ def _build_3d_plot(envelope, critical_alt, runway_length=0.0, aim_point=0.0, lif
             name=f'Touchdown Target ({aim_point:,.0f} ft)',
         ))
 
+    # Compute axis ranges for balanced 3D view
+    all_x, all_y, all_z = [], [], []
+    for item in envelope:
+        for side in ('left', 'right'):
+            traj = item[side]['trajectory']
+            if traj:
+                all_x.extend(p['x'] for p in traj)
+                all_y.extend(p['y'] for p in traj)
+                all_z.extend(p['z'] for p in traj)
+        sa = item.get('straight_ahead')
+        if sa and sa.get('trajectory'):
+            all_y.extend(p['y'] for p in sa['trajectory'])
+            all_z.extend(p['z'] for p in sa['trajectory'])
+    if all_x and all_y and all_z:
+        dx = max(abs(max(all_x) - min(all_x)), 100)
+        dy = max(abs(max(all_y) - min(all_y)), 100)
+        dz = max(abs(max(all_z) - min(all_z)), 50)
+        max_range = max(dx, dy, dz)
+        aspect = dict(x=dx / max_range, y=dy / max_range, z=dz / max_range)
+        aspect_mode = 'manual'
+    else:
+        aspect = dict(x=1, y=1, z=1)
+        aspect_mode = 'data'
+
     fig.update_layout(
         scene=dict(
             xaxis_title='Lateral (ft)',
             yaxis_title='Along Runway (ft)',
             zaxis_title='Altitude AGL (ft)',
-            aspectmode='data',
+            aspectmode=aspect_mode,
+            aspectratio=aspect,
             camera=dict(
                 eye=dict(x=1.5, y=-1.5, z=1.0),
                 center=dict(x=0, y=0.15, z=0),
