@@ -37,9 +37,11 @@ def run_turnback_page():
     incomplete at low altitudes (crash before completing the turn) and complete
     above the **critical altitude** (safe return).
 
-    *Physics*: zero thrust, constant bank, gradient = −D / W.
-    Bank increases drag via higher C_L = n_z·W/(q·S) where n_z = 1/cos(φ).
-    Stall speed increases by √n_z in the turn.
+    *Physics*: zero thrust after engine failure. Descent gradient = −D/W.
+    In a banked turn the wing must produce more lift to support the load
+    factor n_z = 1/cos(φ), raising C_L. Since induced drag grows as C_L²,
+    steeper banks dramatically increase total drag and sink rate.
+    Stall speed also rises by √n_z, narrowing the safe speed margin.
     """)
 
     # ── Sidebar inputs ──
