@@ -6,7 +6,7 @@ Builds the heart-shaped safe-return envelope at various failure altitudes AGL.
 
 Physics:
   - Zero thrust (T=0) after engine failure
-  - Gradient = (T-D) / (nz * W)  where nz = 1/cos(bank_angle)
+  - Gradient = (T-D) / W  (bank angle affects D via higher CL, not the gradient equation)
   - Drag polar: CD = CDo + ΔCDo_flap + k·CL²
   - CL = nz·W / (q·S)  to support the load factor in the turn
   - Turn rate: ω = g·tan(φ) / V_TAS
@@ -429,7 +429,7 @@ def simulate_turnback(
                     # Estimate altitude loss for one orbit before committing
                     _cl_orb = nz_bank * weight / (q * S) if q * S > 0 else 1.0
                     _cd_orb = cdo + k * _cl_orb ** 2
-                    _orbit_alt_loss = (2.0 * math.pi * v_fps_actual ** 2 * _cd_orb
+                    _orbit_alt_loss = (2.0 * math.pi * v_fps_actual ** 2 * _cd_orb * nz_bank
                                        / (max(_cl_orb, 0.01) * G_FPS2 * max(tan_phi, 0.01)))
                     _safe_to_orbit = z > _orbit_alt_loss + 150
 
@@ -579,8 +579,9 @@ def simulate_turnback(
         cd = cdo + k * cl ** 2
         drag = cd * q * S
 
-        # --- Flight path angle (original physics model) ---
-        sin_gamma = -drag / (nz * weight) if nz * weight > 0 else -0.5
+        # --- Flight path angle (energy method) ---
+        # sin(γ) = (T−D)/W — bank angle affects D through CL, not the gradient.
+        sin_gamma = -drag / weight if weight > 0 else -0.5
         sin_gamma = max(sin_gamma, -1.0)
         gamma = math.asin(sin_gamma)
 
@@ -600,7 +601,7 @@ def simulate_turnback(
                 # Required descent angle to reach aim point at z=0
                 sin_gamma_needed = -z / math.sqrt(z ** 2 + dist_td ** 2)
                 if sin_gamma > sin_gamma_needed:  # current descent too shallow
-                    drag_needed = -sin_gamma_needed * nz * weight
+                    drag_needed = -sin_gamma_needed * weight
                     cd_needed = drag_needed / (q * S) if q * S > 0 else 0
                     # Cap: aggressive forward slip can roughly triple parasite drag
                     cd_max_slip = 3.0 * cdo + k * cl ** 2
@@ -608,7 +609,7 @@ def simulate_turnback(
                     if cd_eff > cd:
                         slipping = True
                         drag = cd_eff * q * S
-                        sin_gamma = -drag / (nz * weight)
+                        sin_gamma = -drag / weight
                         sin_gamma = max(sin_gamma, -1.0)
                         gamma = math.asin(sin_gamma)
                         v_vert = v_fps_actual * sin_gamma
@@ -935,7 +936,7 @@ def simulate_straight_ahead(
         cd = cdo + k * cl ** 2
         drag = cd * q * S
 
-        sin_gamma = -drag / (nz * weight) if nz * weight > 0 else -0.5
+        sin_gamma = -drag / weight if weight > 0 else -0.5
         sin_gamma = max(sin_gamma, -1.0)
         gamma = math.asin(sin_gamma)
 
