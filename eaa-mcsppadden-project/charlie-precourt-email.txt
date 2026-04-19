@@ -1,0 +1,76 @@
+EXT - RE: turnback
+Charlie Precourt<precourt@comcast.net>
+
+​
+Nick Guida​
+Hi Nick
+
+I’m ready to reengage on this, thanks for the ping.  However, I’m getting a “bad gateway message” though when I click your link… not sure what that is. 
+
+ 
+
+I apologize for this long email, but I thought you could benefit from the background of what we’ve done at EAA.  I have a board meeting at Oshkosh the 29th of April and it would be great to share what you have created with them… so here goes:
+
+ 
+
+I’m attaching a few of our EAA items we have “in progress” for your review.  We would have published something by now, but I wasn’t going to let that happen until we could give pilots a tool to enable them to “apply the academics” to their daily flying…. The calculation as you know is just too complex for them to pull an answer from their POH charts…  Some background first.  Here’s how EAA got started with all this (we’ve been at it for four years plus):
+
+ 
+
+A few years ago, the FAA put out an advisory circular to the attention of CFIs advising them of the need/requirement to train engine power loss on takeoff as a special item during biennial flight reviews.  Specifically, to “address if, when and how” to return to the airport following a power loss on takeoff.  Then they failed to provide any supporting training materials to help CFIs to actually do this.  The result is we continue to have nothing but Folklore out there governing how folks treat a power loss on takeoff.  Surveys we have conducted show overwhelmingly that pilots are walking around with the number 800 feet in their head as the altitude allowing them to return to the airport… with no rationale for where that information comes from.  Pure folklore….  The AC is 61-83K and I’ve attached it here… the paragraph of interest is page 49, para. A.114  This is a 2024 version, but we were working with an earlier one with the same language (around 2021). 
+Shortly after this AC came out, an EAA member from the Minneapolis area who was returning to flying after a long hiatus was working with his CFI and got concerned about his local airport being surrounded by urban sprawl… worse, he was in a Cherokee.   His CFI had him convinced he could make a turnback, and so he went to altitude on his own to “test it” and discovered he was not even close… he then proceeded to do a bunch of mighty fine analytics showing it was impossible from any altitude … that aircraft’s climb ratio was miserable and it never got above its glide angle… He then challenged his CFIs with this learning, and they were “shocked” to find they couldn’t make it work either.  He then came to us at EAA, and we launched a project to help him and the CFI’s trying to satisfy 1) above. 
+We formed a committee that included the former head of the Aero Dept at the Naval Academy Prof. Rogers.  I have attached one of his papers (Estimating Turnback Altitude).  He supervised the senior research project of an astronaut colleague of mine (Brent Jett) investigating the “impossible turn” back in the late 70’s/early 80’s using then available simulators… Many years later I got introduced to Brent’s paper and pulled the professor into our team.  (see attached Brent Jett paper)
+Also on the little committee was Rich McSpadden, the former USAF Thunderbird Pilot who was head of AOPA’s Safety Foundation and known for his “Early Analysis” videos… before we finished our project, he ironically died in the right seat of a Cessna Cardinal up in Lake Placid, flying with a former NE Patriot’s football player doing a photo shoot… the engine quit or stumbled on takeoff and they tried to turnback but didn’t make it… We now are planning to call our effort the “McSpadden Project.” 
+Our goal is to get a bit of academic material (explaining the realities of the problem) with a video, and a preflight tool enabling pilots to do some quick preflight planning that gives them the real situation they are in, and an output like a takeoff data card that helps them make the right choice… like land ahead and don’t try the turnback, or you can do it today IF XYZ happens
+ 
+
+So, what’s with the attachments… The attached ppt “Segmented Turnback Analysis” is the draft of a narration to an animated video that will explain why this scenario is so difficult for pilots to assess, and why they should abandon guessing that 800 feet is OK.  The video will accompany a series of handouts, including a new Advisory Circular, (draft attached along with a staff summary describing it) and some edits to the FAA Airplane Flying Handbook, chapters 6 and 18.  And a communication piece like in this link to our May edition of the Sport Aviation magazine (EAA publication) article on power loss on takeoff…  https://acrobat.adobe.com/id/urn:aaid:sc:VA6C2:22408eb6-7c51-4b06-9343-87dbc8f8aa26    
+
+ 
+
+But the final missing piece is an APP for pilots to run flight day analysis for their situation.  Without it we’re not going to move the needle…that’s where I’m excited about your help…  We have been working with a guy (AF Academy grad, AF pilot, and Rand Corp analyst) who created a very good tool with good accuracy, but it has a difficult user interface (my opinion)…  This is the link to his tool  that is called “TLAR (that looks about right)” that will calculate turnback capability and last abort point during takeoff roll (to remain on runway)…It shows video animation of the day-of takeoff that a pilot is about to make and can even be used in flight to give real time feedback (not a step I think we’re ready for with the average pilot).   It is a challenging interface in my opinion.  www.TLARpilot.com   I don’t recall but you may have to use the “Pro” version to get the turnback performance part.  You might have a look for comparison…  I am looking for a lot simpler answer (see below). 
+
+ 
+
+Bottom line: Here’s what I think we need to do to simplify this for the pilot… And I think your App as you showed it to me is just about there. 
+I’d like a window screen for pilot data entry of a number of parameters that will result in a Takeoff Data Card that gives the info to create the emergency planning needed for a power loss on takeoff… Kind of like the Vspeeds TOLD card we use in jets…
+
+Specifically:  Inputs would be:   Aircraft Type / Gross weight / Airport / Runway in use / METAR temperature, winds, altimeter setting, runway condition (dry/wet, etc.) / Winds at 3000 feet (pilot gets that from Foreflight weather winds tab) / climb speed choice (Vx or Vy or other) / expected reaction time (pilot selectable, 3, 5, 10 secs) /  Turn bank angle (pilot selectable, 30, 40, 45) / Turnback speed ( pilot selectable Vg, 5 knots above Vstall for chosen bank i.e horn on, or other)  / and Flap setting.
+
+ 
+
+The output would be:  Takeoff distance to 50 feet / Last point on the runway that abort is possible (and if re-landing after takeoff is possible, it would show limit to re-land from X feet in the air straight ahead) / Altitude where a turnback maneuver achieves a return to the runway / expected altitude crossing the threshold with this turnback (provides idea of margin) / turn direction required to make the turnback (based on surface wind and winds at 3000 from pilot input).  Pilots could run the analysis with takeoff flaps and with flaps retracted… your thoughts on how to manage that in the App? Typically they’d have flaps retracted by the time a turnback is feasible…  At some point if we could integrate with Google Earth we might highlight off field landing spot candidates for a failure between last abort point and turnback point… but that could be a later feature. 
+
+
+I think the information/data necessary to run these calculations is fundamentally there in POH (climb, glide etc.) but one element is not provided in any flight test data and that’s altitude loss in the turnback… I’ve attached Dr. Rogers paper on that… He calls it Estimating Turnback Altitude… and he says it can be done with POH data; however, he gets into some pretty deep analysis dependent on airfoil type, etc., which is not commonly available info to the pilot community.  So, I have always considered any app we create would have a weakness in this phase of the maneuver… Would like your thoughts on the margins we’d put around that expected performance to provide the pilots reasonable results without “exceptional flying skills.”  I want to have something we (EAA) could put out to the community without a lot of concern for liability… or perhaps we get an FAA endorsement to refer to it in their AC we are proposing…
+
+ 
+
+Thanks for reading if you got this far!  Happy to get on the phone to discuss… if I had a little demo using your App where I could set up a scenario, make some inputs from my list and have it spit out my TO Data Card, that would be pretty impressive to show at the board meeting…
+
+ 
+
+Charlie
+
+ 
+
+ 
+
+ 
+
+From: Nick Guida <nickg@tamarackaero.com>
+Sent: Wednesday, April 15, 2026 4:14 PM
+To: Charlie Precourt <precourt@comcast.net>
+Subject: turnback
+
+ 
+
+https://turnback.voloaltro.tech/
+
+ 
+
+ 
+
+
+
+ 

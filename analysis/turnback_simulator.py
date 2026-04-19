@@ -38,6 +38,38 @@ def _compute_aero_k(S, b, e, h_wl):
     return 1.0 / (math.pi * e * AR_eff)
 
 
+def _interpolate_wind_at_altitude(alt_agl, wind_sfc_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt):
+    """Interpolate wind speed at given altitude AGL using piecewise linear interpolation.
+    
+    Args:
+        alt_agl: altitude AGL (ft)
+        wind_sfc_kt: wind speed at surface (ft)
+        wind_1000_kt: wind speed at 1000 ft AGL
+        wind_2000_kt: wind speed at 2000 ft AGL
+        wind_3000_kt: wind speed at 3000 ft AGL
+    
+    Returns:
+        wind speed at the given altitude (knots)
+    """
+    if alt_agl <= 0:
+        return wind_sfc_kt
+    elif alt_agl <= 1000:
+        # Linear interpolation between surface and 1000 ft
+        frac = alt_agl / 1000.0
+        return wind_sfc_kt + frac * (wind_1000_kt - wind_sfc_kt)
+    elif alt_agl <= 2000:
+        # Linear interpolation between 1000 ft and 2000 ft
+        frac = (alt_agl - 1000.0) / 1000.0
+        return wind_1000_kt + frac * (wind_2000_kt - wind_1000_kt)
+    elif alt_agl <= 3000:
+        # Linear interpolation between 2000 ft and 3000 ft
+        frac = (alt_agl - 2000.0) / 1000.0
+        return wind_2000_kt + frac * (wind_3000_kt - wind_2000_kt)
+    else:
+        # Above 3000 ft, assume constant wind
+        return wind_3000_kt
+
+
 def best_glide_kias(config, weight, nz, field_elevation, isa_dev, cdo_override=None):
     """Compute best-glide KIAS (max L/D speed) for a given load factor.
 
@@ -159,6 +191,9 @@ def simulate_turnback(
     turn_direction='left',
     wind_speed_kt=0.0,
     wind_from_deg=0.0,
+    wind_1000_kt=0.0,
+    wind_2000_kt=0.0,
+    wind_3000_kt=0.0,
     runway_length=0.0,
     liftoff_distance=0.0,
     aim_point=0.0,
@@ -170,6 +205,7 @@ def simulate_turnback(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
+    runway_friction=1.0,
 ):
     """Simulate the turnback maneuver after total engine failure.
 
@@ -273,10 +309,8 @@ def simulate_turnback(
     # Convention: wind_from_deg is relative to runway heading.
     #   0° = headwind (from ahead), 90° = from the right, 180° = tailwind
     # The wind velocity vector points opposite to where it comes FROM.
-    wind_fps = wind_speed_kt * 6076.12 / 3600.0
+    # NOTE: Wind speed will be interpolated per timestep based on altitude.
     wind_from_rad = math.radians(wind_from_deg)
-    wind_x = -wind_fps * math.sin(wind_from_rad)   # lateral ft/s (+ = rightward)
-    wind_y = -wind_fps * math.cos(wind_from_rad)    # along-runway ft/s (+ = with takeoff direction)
 
     # Bank parameters
     phi_rad = math.radians(bank_angle_deg)
@@ -309,7 +343,11 @@ def simulate_turnback(
         # Aim point based on approach speed (landing flaps) for accurate rollout
         td_kias_est = approach_kias if approach_kias else (vbg_1g if vbg_1g else airspeed_kias)
         v_td_est, _, _ = _kias_to_fps(td_kias_est, sigma_sfc, delta_sfc)
-        rollout_est = v_td_est ** 2 / (2.0 * G_FPS2 * 0.3)  # mu_brake = 0.3
+        # Braking friction coefficient scaled by runway_friction
+        # runway_friction = 1.0 for dry asphalt (mu = 0.3)
+        # runway_friction = 0.7 for wet asphalt (mu ≈ 0.21)
+        mu_brake = 0.3 * runway_friction  # scale baseline mu by runway condition
+        rollout_est = v_td_est ** 2 / (2.0 * G_FPS2 * mu_brake)
         target_y = rollout_est + touchdown_margin_ft
     else:
         target_y = 0.0
@@ -376,6 +414,14 @@ def simulate_turnback(
         # --- Atmosphere at current altitude ---
         alt_msl = field_elevation + max(z, 0.0)
         _, _, sigma_now, delta_now, _, c_kt = atmos(alt_msl, isa_dev)
+
+        # --- Interpolate wind at current altitude ---
+        wind_speed_at_alt = _interpolate_wind_at_altitude(
+            z, wind_speed_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt
+        )
+        wind_fps = wind_speed_at_alt * 6076.12 / 3600.0
+        wind_x = -wind_fps * math.sin(wind_from_rad)   # lateral ft/s (+ = rightward)
+        wind_y = -wind_fps * math.cos(wind_from_rad)    # along-runway ft/s (+ = with takeoff direction)
 
         # --- Phase logic (runs first so flap/nz state is current) ---
         # target_bank_deg is set per-phase; actual_bank_deg ramps toward it.
@@ -739,7 +785,7 @@ def simulate_turnback(
         landing_kias = current_kias if trajectory else airspeed_kias
     landing_rollout = 0.0
     if success:
-        mu_brake = 0.3
+        mu_brake = 0.3 * runway_friction
         _, _, sigma_sfc, _, _, _ = atmos(field_elevation, isa_dev)
         v_td_fps, _, _ = _kias_to_fps(landing_kias, sigma_sfc, 1.0)
         landing_rollout = v_td_fps ** 2 / (2.0 * G_FPS2 * mu_brake)
@@ -804,6 +850,7 @@ def simulate_straight_ahead(
     config, weight, failure_alt_agl, airspeed_kias,
     reaction_time, field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
+    wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     prop_state='feathered',
@@ -811,6 +858,7 @@ def simulate_straight_ahead(
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
+    runway_friction=1.0,
 ):
     """Simulate a straight-ahead landing after engine failure.
 
@@ -965,7 +1013,7 @@ def simulate_straight_ahead(
     touchdown_speed_kias = current_kias if trajectory else airspeed_kias
 
     # Landing rollout
-    mu_brake = 0.3
+    mu_brake = 0.3 * runway_friction
     _, _, sigma_sfc, _, _, _ = atmos(field_elevation, isa_dev)
     v_td_fps, _, _ = _kias_to_fps(touchdown_speed_kias, sigma_sfc, 1.0)
     landing_rollout = v_td_fps ** 2 / (2.0 * G_FPS2 * mu_brake)
@@ -1007,6 +1055,7 @@ def find_straight_ahead_max_altitude(
     config, weight, airspeed_kias, reaction_time,
     field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
+    wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     alt_low=10.0, alt_high=3000.0, tolerance=5.0,
@@ -1015,6 +1064,7 @@ def find_straight_ahead_max_altitude(
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
+    runway_friction=1.0,
 ):
     """Find the maximum engine-failure altitude where a straight-ahead
     landing succeeds (touchdown + rollout fit on the remaining runway).
@@ -1029,6 +1079,7 @@ def find_straight_ahead_max_altitude(
         reaction_time=reaction_time,
         field_elevation=field_elevation, isa_dev=isa_dev,
         wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
+        wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
         runway_length=runway_length, liftoff_distance=liftoff_distance,
         speed_mode=speed_mode,
         prop_state=prop_state,
@@ -1036,6 +1087,7 @@ def find_straight_ahead_max_altitude(
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
+        runway_friction=runway_friction,
     )
 
     # Check lowest altitude
@@ -1071,6 +1123,7 @@ def find_critical_altitude(
     reaction_time, field_elevation=0.0, isa_dev=0.0,
     alt_low=50.0, alt_high=3000.0, tolerance=5.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
+    wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     turn_direction='left',
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
@@ -1081,6 +1134,7 @@ def find_critical_altitude(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
+    runway_friction=1.0,
 ):
     """Find the minimum failure altitude that allows a safe return.
 
@@ -1100,6 +1154,10 @@ def find_critical_altitude(
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
         touchdown_margin_ft=touchdown_margin_ft,
+        wind_1000_kt=wind_1000_kt,
+        wind_2000_kt=wind_2000_kt,
+        wind_3000_kt=wind_3000_kt,
+        runway_friction=runway_friction,
     )
 
     def _sim(alt):
@@ -1145,6 +1203,7 @@ def build_turnback_envelope(
     reaction_time, field_elevation=0.0, isa_dev=0.0,
     alt_step=100, max_alt=None,
     wind_speed_kt=0.0, wind_from_deg=0.0,
+    wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
     speed_mode='fixed',
@@ -1154,6 +1213,7 @@ def build_turnback_envelope(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
+    runway_friction=1.0,
 ):
     """Build the full heart-shaped envelope at multiple failure altitudes.
 
@@ -1182,6 +1242,10 @@ def build_turnback_envelope(
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
         touchdown_margin_ft=touchdown_margin_ft,
+        wind_1000_kt=wind_1000_kt,
+        wind_2000_kt=wind_2000_kt,
+        wind_3000_kt=wind_3000_kt,
+        runway_friction=runway_friction,
     )
 
     critical_alt_left = find_critical_altitude(
@@ -1295,6 +1359,7 @@ def optimize_turnback(
     config, weight, airspeed_kias, reaction_time,
     field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
+    wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     runway_length=0.0, liftoff_distance=0.0,
     bank_range=(10, 60), bank_step=2,
     alt_high=3000.0,
@@ -1305,6 +1370,7 @@ def optimize_turnback(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
+    runway_friction=1.0,
 ):
     """Sweep bank angle, turn direction, and flap strategy to find the
     combination that gives the lowest critical altitude.
@@ -1386,6 +1452,7 @@ def optimize_turnback(
                             reaction_time, field_elevation, isa_dev,
                             alt_high=alt_high,
                             wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
+                            wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
                             turn_direction=direction,
                             runway_length=runway_length, liftoff_distance=liftoff_distance,
                             aim_point=aim_pt, flap_on_return=flap_on_return,
@@ -1396,6 +1463,7 @@ def optimize_turnback(
                             vbg_geardown_kias=vbg_geardown_kias,
                             vbg_landing_kias=vbg_landing_kias,
                             touchdown_margin_ft=touchdown_margin_ft,
+                            runway_friction=runway_friction,
                         )
 
                         # Check overrun at critical altitude
@@ -1405,6 +1473,7 @@ def optimize_turnback(
                                 config, weight, crit, airspeed_kias, bank_deg,
                                 flap_setting, reaction_time, field_elevation, isa_dev,
                                 direction, wind_speed_kt, wind_from_deg,
+                                wind_1000_kt, wind_2000_kt, wind_3000_kt,
                                 runway_length=runway_length,
                                 liftoff_distance=liftoff_distance,
                                 aim_point=aim_pt,
@@ -1416,6 +1485,7 @@ def optimize_turnback(
                                 vbg_geardown_kias=vbg_geardown_kias,
                                 vbg_landing_kias=vbg_landing_kias,
                                 touchdown_margin_ft=touchdown_margin_ft,
+                                runway_friction=runway_friction,
                             )
                             overrun = test.get('runway_overrun', False)
 
