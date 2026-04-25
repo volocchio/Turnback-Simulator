@@ -269,7 +269,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
 
     {warning_html}
 
-    <h2>Practice Drill (Charlie Precourt / EAA McSpadden Project)</h2>
+    <h2>Practice Drill</h2>
     <ol style='font-size: 10pt; line-height: 1.4;'>
       <li>Climb to a safe altitude (3,000 ft AGL or higher).</li>
       <li>Reduce to climb-out KIAS shown above ({_fmt_int(airspeed, ' KIAS')}), simulate idle power, wait the {_fmt_dec(reaction, 1, ' sec')} reaction time.</li>
