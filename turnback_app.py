@@ -698,6 +698,7 @@ def run_turnback_page():
             # Data-card extras
             'airport_ident': selected_airport_ident,
             'runway_ident': selected_runway_ident,
+            'runway_heading_true': runway_heading_true,
             'field_elev': field_elev,
             'isa_dev': isa_dev,
             'altimeter_inhg': altimeter_inhg,
@@ -782,6 +783,7 @@ def run_turnback_page():
                 'speed_mode': speed_mode,
                 'airport_ident': selected_airport_ident,
                 'runway_ident': selected_runway_ident,
+                'runway_heading_true': runway_heading_true,
                 'field_elev': field_elev,
                 'isa_dev': isa_dev,
                 'altimeter_inhg': altimeter_inhg,
@@ -1091,6 +1093,8 @@ def run_turnback_page():
         wind_speed_kt=float(res.get('wind_speed', 0) or 0),
         wind_from_deg=float(res.get('wind_from_deg', 0) or 0),
         liftoff_distance_ft=float(res.get('liftoff_distance', 0) or 0),
+        default_airport_code=str(res.get('airport_ident') or ''),
+        default_runway_heading=float(res.get('runway_heading_true') or 0),
     )
 
     # ── 3D Plot ──

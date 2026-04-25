@@ -498,6 +498,8 @@ def render_landing_map_section(
     wind_speed_kt: float = 0.0,
     wind_from_deg: float = 0.0,
     liftoff_distance_ft: float = 0.0,
+    default_airport_code: str = "KSEZ",
+    default_runway_heading: float = 30.0,
 ):
     """Render the satellite-map / forced-landing analysis section in the UI.
 
@@ -517,15 +519,18 @@ def render_landing_map_section(
 
     # ── Inputs ──
     cols = st.columns([1, 1, 1, 1])
+    _default_code = (default_airport_code or "KSEZ").strip().upper() or "KSEZ"
     code = cols[0].text_input(
-        "Airport code (ICAO or IATA)", value="KSEZ",
+        "Airport code (ICAO or IATA)", value=_default_code,
         help="ICAO 4-letter (e.g. KSEZ, EGLL) or IATA 3-letter (e.g. SDX, LHR)",
     ).strip().upper()
+    _default_hdg = int(round(default_runway_heading)) % 360 if default_runway_heading else 30
     runway_heading = cols[1].number_input(
         "Departure runway heading (° true)",
-        min_value=0, max_value=359, value=30, step=10,
+        min_value=0, max_value=359, value=_default_hdg, step=5,
         help="The magnetic/true heading you depart on. Used to position "
-             "the glide footprint along the climb-out path.",
+             "the glide footprint along the climb-out path. Pre-filled from "
+             "the runway selected in the sidebar.",
     )
     climb_gradient = cols[2].number_input(
         "Climb gradient (°)",
