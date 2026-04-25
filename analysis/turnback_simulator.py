@@ -70,6 +70,48 @@ def _interpolate_wind_at_altitude(alt_agl, wind_sfc_kt, wind_1000_kt, wind_2000_
         return wind_3000_kt
 
 
+def _interpolate_wind_profile(alt_agl, wind_sfc_kt, profile):
+    """Piecewise-linear lookup of wind speed for an arbitrary winds-aloft profile.
+
+    profile: iterable of (alt_agl_ft, speed_kt) pairs in ANY order.  The surface
+             value (alt 0) is supplied separately as wind_sfc_kt and is always
+             prepended.  Above the highest altitude the wind is held constant.
+
+    Charlie #4: pilots get winds aloft at non-standard altitudes (e.g. 3000,
+    6000, 9000 ft AGL).  This lets them feed those rows directly instead of
+    being forced into 1000/2000/3000.
+    """
+    # Build sorted list with surface anchor; ignore any rows ≤ 0 in the user
+    # data since the surface row is the wind_speed_kt argument.
+    rows = [(0.0, float(wind_sfc_kt))]
+    for a, s in profile:
+        try:
+            a_f = float(a)
+            s_f = float(s)
+        except (TypeError, ValueError):
+            continue
+        if a_f > 0.0:
+            rows.append((a_f, s_f))
+    rows.sort(key=lambda r: r[0])
+    # Deduplicate identical altitudes (keep last)
+    dedup = {}
+    for a, s in rows:
+        dedup[a] = s
+    rows = sorted(dedup.items(), key=lambda r: r[0])
+
+    if alt_agl <= rows[0][0]:
+        return rows[0][1]
+    if alt_agl >= rows[-1][0]:
+        return rows[-1][1]
+    for i in range(1, len(rows)):
+        a_lo, s_lo = rows[i - 1]
+        a_hi, s_hi = rows[i]
+        if alt_agl <= a_hi:
+            frac = (alt_agl - a_lo) / (a_hi - a_lo) if a_hi > a_lo else 0.0
+            return s_lo + frac * (s_hi - s_lo)
+    return rows[-1][1]
+
+
 def best_glide_kias(config, weight, nz, field_elevation, isa_dev, cdo_override=None):
     """Compute best-glide KIAS (max L/D speed) for a given load factor.
 
@@ -178,6 +220,125 @@ def _select_vbg_override(gear_down, landing_flaps_active, vbg_clean_kias, vbg_ge
     return 0
 
 
+def vs_kias_at_load(config, weight, nz, field_elevation, isa_dev,
+                    landing_flaps=False):
+    """Compute Vs (KIAS) at the given load factor.
+
+    Vs(nz) = sqrt(2·nz·W / (ρ·S·CLmax))  → KIAS via density correction.
+
+    Used by the operational glide-speed presets recommended by Charlie
+    Precourt: "Vs at the selected bank, plus 10 kt" or "1.3 × Vs at the
+    selected bank".  These are the speeds we want pilots to actually fly
+    in the turn — safely above stall while close enough to the
+    aerodynamic optimum.
+
+    Args:
+        config: aircraft config (provides wing_area, Clmax, Clmax_flapsXX).
+        weight: gross weight (lb).
+        nz: load factor (1g level, 1/cos(phi) in a banked level turn).
+        field_elevation: ft MSL — sets the density at evaluation altitude.
+        isa_dev: ISA temperature deviation (°C).
+        landing_flaps: if True, use the landing CLmax instead of clean.
+
+    Returns:
+        Vs (KIAS) at the given load factor.
+    """
+    from engine.flight_physics import atmos
+    if landing_flaps:
+        clmax = (getattr(config, 'Clmax_flaps40', 0.0) or
+                 getattr(config, 'Clmax_flaps15', 0.0) or
+                 config.Clmax)
+    else:
+        clmax = config.Clmax
+    if clmax <= 0:
+        return 0.0
+    _, _, sigma, _, _, _ = atmos(field_elevation, isa_dev)
+    rho = 0.002378 * sigma
+    vs_fps = math.sqrt(2.0 * nz * weight / (rho * config.wing_area * clmax))
+    vs_keas = vs_fps / 1.6878
+    vs_kias = vs_keas * math.sqrt(sigma)
+    return vs_kias
+
+
+def operational_turn_speeds(config, weight, bank_angle_deg, field_elevation,
+                            isa_dev, landing_flaps=False):
+    """Return the two operational turn-speed targets at a given bank.
+
+    Returns dict with:
+        nz, vs_kias, vs_plus_10_kias, vs_x_1p3_kias
+    """
+    nz = 1.0 / math.cos(math.radians(bank_angle_deg)) if bank_angle_deg < 89.5 else 100.0
+    vs = vs_kias_at_load(config, weight, nz, field_elevation, isa_dev,
+                         landing_flaps=landing_flaps)
+    return {
+        'nz': nz,
+        'vs_kias': vs,
+        'vs_plus_10_kias': vs + 10.0,
+        'vs_x_1p3_kias': vs * 1.3,
+    }
+
+
+def _compute_turn_statistics(trajectory, failure_alt_agl):
+    """Compute training-output stats from a trajectory:
+        - total_turn_deg:  sum of |Δheading| over the entire maneuver
+        - altitude_loss_per_180:  average altitude loss per 180° of turning
+          (None if the maneuver doesn't include a full 180° of turn)
+        - altitude_at_180_increments: list of altitudes AGL at each
+          180° increment of cumulative turning, starting at 0° = failure_alt_agl
+
+    Charlie Precourt asked for this so a pilot can practice the maneuver
+    at altitude and match the per-half-turn altitude loss before applying
+    a personal safety factor.
+    """
+    if not trajectory:
+        return {
+            'total_turn_deg': 0.0,
+            'altitude_loss_per_180': None,
+            'altitude_at_180_increments': [],
+        }
+
+    total_turn_deg = trajectory[-1].get('cum_turn_deg', 0.0)
+
+    increments = [{'turn_deg': 0, 'altitude_agl': failure_alt_agl}]
+    next_target_deg = 180
+    while next_target_deg <= total_turn_deg + 0.01:
+        # Find the first trajectory point with cum_turn_deg >= next_target_deg
+        for i, pt in enumerate(trajectory):
+            if pt.get('cum_turn_deg', 0.0) >= next_target_deg:
+                # Linear interpolation between i-1 and i for accuracy
+                if i == 0:
+                    z_at = pt['z']
+                else:
+                    prev = trajectory[i - 1]
+                    d0 = prev.get('cum_turn_deg', 0.0)
+                    d1 = pt.get('cum_turn_deg', 0.0)
+                    if d1 > d0:
+                        frac = (next_target_deg - d0) / (d1 - d0)
+                    else:
+                        frac = 0.0
+                    z_at = prev['z'] + frac * (pt['z'] - prev['z'])
+                increments.append({'turn_deg': next_target_deg,
+                                    'altitude_agl': z_at})
+                break
+        next_target_deg += 180
+
+    if len(increments) >= 2:
+        # Average altitude loss per 180° = (z0 - z_last) / number_of_180s
+        z0 = increments[0]['altitude_agl']
+        z_last = increments[-1]['altitude_agl']
+        n_180 = (len(increments) - 1)
+        loss_per_180 = (z0 - z_last) / n_180
+    else:
+        loss_per_180 = None
+
+    return {
+        'total_turn_deg': round(total_turn_deg, 1),
+        'altitude_loss_per_180': round(loss_per_180, 1) if loss_per_180 is not None else None,
+        'altitude_at_180_increments': increments,
+    }
+
+
+
 def simulate_turnback(
     config,
     weight,
@@ -194,6 +355,7 @@ def simulate_turnback(
     wind_1000_kt=0.0,
     wind_2000_kt=0.0,
     wind_3000_kt=0.0,
+    wind_profile=None,
     runway_length=0.0,
     liftoff_distance=0.0,
     aim_point=0.0,
@@ -365,6 +527,7 @@ def simulate_turnback(
     t = 0.0
     phase = 'reaction'
     total_heading_change = 0.0
+    cum_turn_rad = 0.0           # cumulative |Δheading| across ALL phases (for per-180° loss)
     stalled = False
     stall_time = None
     success = False
@@ -391,6 +554,16 @@ def simulate_turnback(
         v_fps_init, _, _ = _kias_to_fps(vbg_turn, sigma_init, delta_init)
     elif speed_mode == 'best_glide_1g':
         v_fps_init, _, _ = _kias_to_fps(vbg_1g, sigma_init, delta_init)
+    elif speed_mode in ('vs_plus_10', 'vs_x_1p3'):
+        # Operational presets: target = Vs(nz_bank) +10 kt or × 1.3
+        _vs_turn = vs_kias_at_load(config, weight, nz_bank,
+                                    field_elevation, isa_dev,
+                                    landing_flaps=False)
+        if speed_mode == 'vs_plus_10':
+            vbg_turn = _vs_turn + 10.0
+        else:
+            vbg_turn = _vs_turn * 1.3
+        v_fps_init, _, _ = _kias_to_fps(vbg_turn, sigma_init, delta_init)
     else:
         vbg_turn = None
         v_fps_init, _, _ = _kias_to_fps(airspeed_kias, sigma_init, delta_init)
@@ -416,9 +589,14 @@ def simulate_turnback(
         _, _, sigma_now, delta_now, _, c_kt = atmos(alt_msl, isa_dev)
 
         # --- Interpolate wind at current altitude ---
-        wind_speed_at_alt = _interpolate_wind_at_altitude(
-            z, wind_speed_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt
-        )
+        if wind_profile:
+            wind_speed_at_alt = _interpolate_wind_profile(
+                z, wind_speed_kt, wind_profile
+            )
+        else:
+            wind_speed_at_alt = _interpolate_wind_at_altitude(
+                z, wind_speed_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt
+            )
         wind_fps = wind_speed_at_alt * 6076.12 / 3600.0
         wind_x = -wind_fps * math.sin(wind_from_rad)   # lateral ft/s (+ = rightward)
         wind_y = -wind_fps * math.cos(wind_from_rad)    # along-runway ft/s (+ = with takeoff direction)
@@ -587,6 +765,18 @@ def simulate_turnback(
             else:
                 target_kias, _, _ = best_glide_kias(
                     config, weight, 1.0, field_elevation, isa_dev, cdo_override=cdo)
+        elif speed_mode in ('vs_plus_10', 'vs_x_1p3'):
+            # Operational presets: target = Vs(nz) +10 kt or × 1.3
+            # Use current local density (sigma_now) and current CLmax
+            # (which already reflects flap state) so the target tracks
+            # configuration changes during the maneuver.
+            _rho_now = 0.002378 * sigma_now
+            _vs_now_fps = math.sqrt(2.0 * nz * weight / (_rho_now * S * clmax)) if clmax > 0 else 100.0
+            _vs_now_kias = (_vs_now_fps / 1.6878) * math.sqrt(sigma_now)
+            if speed_mode == 'vs_plus_10':
+                target_kias = _vs_now_kias + 10.0
+            else:
+                target_kias = _vs_now_kias * 1.3
         else:
             if phase in ('return', 'orbit', 'circuit') and (use_runway or (flap_on_return and flap_setting > 0)):
                 _rho_now = 0.002378 * sigma_now
@@ -687,6 +877,7 @@ def simulate_turnback(
             'y': y,
             'z': z,
             'heading_deg': math.degrees(heading) % 360.0,
+            'cum_turn_deg': math.degrees(cum_turn_rad),
             'time': t,
             'phase': phase,
             'cl': cl,
@@ -706,6 +897,7 @@ def simulate_turnback(
 
         # --- Integrate ---
         heading += omega * DT
+        cum_turn_rad += abs(omega * DT)
         # Keep heading in [-2π, 2π] range
         if heading > 2 * math.pi:
             heading -= 2 * math.pi
@@ -823,6 +1015,25 @@ def simulate_turnback(
                 vbg_nz, _, _ = best_glide_kias(
                     config, weight, nz_bank, field_elevation, isa_dev, cdo_override=cdo)
                 speed_info['vbg_turn_kias'] = round(vbg_nz, 1)
+    elif speed_mode in ('vs_plus_10', 'vs_x_1p3'):
+        # Surface the operational targets so the data card can show them
+        ops = operational_turn_speeds(config, weight, bank_angle_deg,
+                                       field_elevation, isa_dev,
+                                       landing_flaps=False)
+        speed_info['vs_at_bank_kias'] = round(ops['vs_kias'], 1)
+        speed_info['vs_plus_10_kias'] = round(ops['vs_plus_10_kias'], 1)
+        speed_info['vs_x_1p3_kias'] = round(ops['vs_x_1p3_kias'], 1)
+        speed_info['nz_bank'] = round(ops['nz'], 3)
+        speed_info['target_kias'] = round(
+            ops['vs_plus_10_kias'] if speed_mode == 'vs_plus_10' else ops['vs_x_1p3_kias'],
+            1,
+        )
+
+    # ── Turn-statistics for training output (Charlie #7) ──
+    # Walk the trajectory finding altitude at each 180° increment of
+    # cumulative turning, so the pilot can practice "lose this much
+    # altitude per half-turn at altitude" and pick a safety factor.
+    turn_stats = _compute_turn_statistics(trajectory, failure_alt_agl)
 
     return {
         'trajectory': trajectory,
@@ -839,6 +1050,9 @@ def simulate_turnback(
         'computed_aim_y': target_y,
         'speed_info': speed_info,
         'landing_direction': landing_direction,
+        'total_turn_deg': turn_stats['total_turn_deg'],
+        'altitude_loss_per_180': turn_stats['altitude_loss_per_180'],
+        'altitude_at_180_increments': turn_stats['altitude_at_180_increments'],
     }
 
 
@@ -1056,6 +1270,7 @@ def find_straight_ahead_max_altitude(
     field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
+    wind_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     alt_low=10.0, alt_high=3000.0, tolerance=5.0,
@@ -1124,6 +1339,7 @@ def find_critical_altitude(
     alt_low=50.0, alt_high=3000.0, tolerance=5.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
+    wind_profile=None,
     turn_direction='left',
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
@@ -1157,6 +1373,7 @@ def find_critical_altitude(
         wind_1000_kt=wind_1000_kt,
         wind_2000_kt=wind_2000_kt,
         wind_3000_kt=wind_3000_kt,
+        wind_profile=wind_profile,
         runway_friction=runway_friction,
     )
 
@@ -1204,6 +1421,7 @@ def build_turnback_envelope(
     alt_step=100, max_alt=None,
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
+    wind_profile=None,
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
     speed_mode='fixed',
@@ -1245,6 +1463,7 @@ def build_turnback_envelope(
         wind_1000_kt=wind_1000_kt,
         wind_2000_kt=wind_2000_kt,
         wind_3000_kt=wind_3000_kt,
+        wind_profile=wind_profile,
         runway_friction=runway_friction,
     )
 
@@ -1360,6 +1579,7 @@ def optimize_turnback(
     field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
+    wind_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     bank_range=(10, 60), bank_step=2,
     alt_high=3000.0,
@@ -1453,6 +1673,7 @@ def optimize_turnback(
                             alt_high=alt_high,
                             wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
                             wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                            wind_profile=wind_profile,
                             turn_direction=direction,
                             runway_length=runway_length, liftoff_distance=liftoff_distance,
                             aim_point=aim_pt, flap_on_return=flap_on_return,

@@ -1,0 +1,685 @@
+"""
+Forced-Landing Satellite Map
+============================
+
+Renders an Esri World Imagery satellite map of a user-chosen airport and
+overlays the glide footprint at the dead-zone altitudes (the band where
+the aircraft is too high to land straight ahead on the remaining runway
+and too low to complete the turnback). Optionally queries OpenStreetMap
+(Overpass API) for nearby landing candidates and hazards within glide
+range.
+
+Coordinate conventions
+----------------------
+- All headings are degrees true, 0 = North, increasing clockwise.
+- Glide footprint is computed from the engine-failure point (which is
+  estimated by projecting forward along the runway centerline using a
+  typical climb gradient).
+- L/D used is the aerodynamic best-glide L/D from the simulator
+  (already accounts for prop drag, gear, flaps).
+
+This module is UI-agnostic; the only Streamlit dependency is in
+``render_landing_map_section``.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Optional
+
+# Earth radius in meters (mean)
+_EARTH_R_M = 6_371_000.0
+_FT_PER_M = 3.28084
+_M_PER_NM = 1852.0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Airport lookup
+# ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class Airport:
+    code: str          # ICAO if known, else IATA
+    icao: str
+    iata: str
+    name: str
+    city: str
+    country: str
+    lat: float
+    lon: float
+    elevation_ft: float
+
+
+def lookup_airport(code: str) -> Optional[Airport]:
+    """Look up an airport by ICAO (4-letter) or IATA (3-letter) code.
+
+    Uses the offline ``airportsdata`` package (no network). Returns None
+    if not found.
+    """
+    if not code:
+        return None
+    code = code.strip().upper()
+    try:
+        import airportsdata
+    except ImportError:
+        return None
+
+    # Try ICAO first (4-letter), then IATA (3-letter)
+    if len(code) == 4:
+        db = airportsdata.load('ICAO')
+        rec = db.get(code)
+    elif len(code) == 3:
+        db = airportsdata.load('IATA')
+        rec = db.get(code)
+    else:
+        # Try both
+        rec = airportsdata.load('ICAO').get(code) or \
+              airportsdata.load('IATA').get(code)
+
+    if not rec:
+        return None
+    return Airport(
+        code=code,
+        icao=rec.get('icao', ''),
+        iata=rec.get('iata', ''),
+        name=rec.get('name', ''),
+        city=rec.get('city', ''),
+        country=rec.get('country', ''),
+        lat=float(rec.get('lat', 0.0)),
+        lon=float(rec.get('lon', 0.0)),
+        elevation_ft=float(rec.get('elevation', 0.0)),
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Geodesic helpers (small-distance approximation is fine for <50 nm)
+# ──────────────────────────────────────────────────────────────────────
+
+def offset_latlon(lat: float, lon: float, bearing_deg: float, dist_m: float) -> tuple[float, float]:
+    """Return (lat2, lon2) offset by ``dist_m`` meters along ``bearing_deg`` true.
+
+    Uses spherical-Earth forward formula (accurate to a few meters at
+    glide-footprint distances).
+    """
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+    brg = math.radians(bearing_deg)
+    d_r = dist_m / _EARTH_R_M
+
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(d_r)
+        + math.cos(lat1) * math.sin(d_r) * math.cos(brg)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(brg) * math.sin(d_r) * math.cos(lat1),
+        math.cos(d_r) - math.sin(lat1) * math.sin(lat2),
+    )
+    return math.degrees(lat2), math.degrees(lon2)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Glide footprint geometry
+# ──────────────────────────────────────────────────────────────────────
+
+def glide_radius_m(altitude_agl_ft: float, ld_ratio: float) -> float:
+    """Still-air glide range in meters from ``altitude_agl_ft`` at L/D ratio."""
+    if altitude_agl_ft <= 0 or ld_ratio <= 0:
+        return 0.0
+    range_ft = altitude_agl_ft * ld_ratio
+    return range_ft / _FT_PER_M
+
+
+def estimate_failure_point(
+    airport_lat: float,
+    airport_lon: float,
+    runway_heading_deg: float,
+    altitude_agl_ft: float,
+    climb_gradient_deg: float = 5.0,
+    liftoff_distance_ft: float = 0.0,
+) -> tuple[float, float]:
+    """Estimate the lat/lon where the aircraft reaches ``altitude_agl_ft``.
+
+    Assumes liftoff at ``liftoff_distance_ft`` past the airport reference
+    point along the runway heading, then climbs at ``climb_gradient_deg``
+    above horizontal.
+    """
+    if altitude_agl_ft <= 0:
+        return airport_lat, airport_lon
+    grad = max(0.5, climb_gradient_deg)
+    dist_along_climb_ft = altitude_agl_ft / math.tan(math.radians(grad))
+    total_ft = liftoff_distance_ft + dist_along_climb_ft
+    return offset_latlon(
+        airport_lat, airport_lon, runway_heading_deg, total_ft / _FT_PER_M
+    )
+
+
+def wind_drift_m(
+    altitude_agl_ft: float,
+    ld_ratio: float,
+    best_glide_kias: float,
+    wind_speed_kt: float,
+) -> float:
+    """Approx downwind drift while gliding from altitude to ground (m)."""
+    if altitude_agl_ft <= 0 or best_glide_kias <= 0:
+        return 0.0
+    # Sink rate at L/D max: V / (L/D), in same units. Time = alt / sink.
+    # alt_ft / (V_kt * 1.6878 / ld_ratio)   gives seconds (since 1 kt = 1.6878 ft/s)
+    sink_fps = best_glide_kias * 1.6878 / max(ld_ratio, 1e-6)
+    glide_time_s = altitude_agl_ft / max(sink_fps, 0.1)
+    drift_ft = wind_speed_kt * 1.6878 * glide_time_s
+    return drift_ft / _FT_PER_M
+
+
+# ──────────────────────────────────────────────────────────────────────
+# OpenStreetMap landing-candidate query (Overpass API)
+# ──────────────────────────────────────────────────────────────────────
+
+# What we look for. Each entry: (overpass query fragment, color, label,
+# rating) where rating is one of 'good', 'caution', 'avoid'.
+_OSM_QUERIES = [
+    # Best — dedicated aviation surfaces
+    ('node["aeroway"~"aerodrome|airstrip|airfield"]',           '#22c55e', 'Other airport / airstrip', 'good'),
+    ('way["aeroway"~"aerodrome|airstrip|airfield|runway"]',     '#22c55e', 'Other airport / airstrip', 'good'),
+    # Open agricultural land
+    ('way["landuse"="farmland"]',                                '#84cc16', 'Farmland',                 'good'),
+    ('way["landuse"="meadow"]',                                  '#84cc16', 'Meadow',                   'good'),
+    ('way["landuse"="grass"]',                                   '#a3e635', 'Grass',                    'good'),
+    ('way["leisure"="golf_course"]',                             '#16a34a', 'Golf course',              'good'),
+    # Caution — flat but with hazards (wires, traffic, fences)
+    ('way["highway"~"motorway|trunk|primary"]',                  '#f59e0b', 'Major road (caution: wires/traffic)', 'caution'),
+    ('way["amenity"="parking"]',                                 '#f59e0b', 'Parking lot (caution: light poles)', 'caution'),
+    # Avoid — water, dense built-up
+    ('way["natural"="water"]',                                   '#dc2626', 'Water (avoid)',            'avoid'),
+    ('way["waterway"~"river|canal"]',                            '#dc2626', 'River/canal (avoid)',      'avoid'),
+    ('way["landuse"~"residential|industrial|commercial|retail"]','#dc2626', 'Built-up (avoid)',         'avoid'),
+    ('way["natural"="wood"]',                                    '#dc2626', 'Forest (avoid)',           'avoid'),
+]
+
+
+def fetch_landing_candidates(
+    lat: float,
+    lon: float,
+    radius_m: float,
+    timeout_s: float = 25.0,
+) -> dict:
+    """Query Overpass API for landing-area candidates within ``radius_m``.
+
+    Returns a dict ``{ 'features': [ {label, color, rating, geometry, tags} ], 'error': str|None }``
+    where geometry is a list of (lat, lon) pairs (single point for nodes).
+    """
+    try:
+        import requests
+    except ImportError:
+        return {'features': [], 'error': 'requests not installed'}
+
+    # Cap radius to keep queries reasonable (Overpass enforces limits anyway)
+    r = max(200.0, min(radius_m, 25_000.0))
+
+    parts = []
+    for query_frag, _, _, _ in _OSM_QUERIES:
+        # Insert the around: filter
+        # Overpass syntax: way["k"="v"](around:R,lat,lon);
+        if query_frag.startswith('node'):
+            base, rest = 'node', query_frag[4:]
+        elif query_frag.startswith('way'):
+            base, rest = 'way', query_frag[3:]
+        else:
+            continue
+        parts.append(f'{base}{rest}(around:{r:.0f},{lat:.6f},{lon:.6f});')
+
+    overpass_q = (
+        '[out:json][timeout:25];('
+        + ''.join(parts)
+        + ');out tags geom 200;'
+    )
+
+    try:
+        resp = requests.post(
+            'https://overpass-api.de/api/interpreter',
+            data={'data': overpass_q},
+            timeout=timeout_s,
+            headers={'User-Agent': 'TurnbackSimulator/1.0 (forced-landing-analysis)'},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # network / parse / timeout
+        return {'features': [], 'error': f'{type(exc).__name__}: {exc}'}
+
+    # Index our queries to map result tags back to category
+    def classify(tags: dict) -> tuple[str, str, str]:
+        """Return (color, label, rating) for an element's tags."""
+        if not tags:
+            return ('#888', 'Unknown', 'caution')
+        if tags.get('aeroway') in ('aerodrome', 'airstrip', 'airfield', 'runway'):
+            return ('#22c55e', 'Airport / airstrip', 'good')
+        if tags.get('landuse') == 'farmland':
+            return ('#84cc16', 'Farmland', 'good')
+        if tags.get('landuse') == 'meadow':
+            return ('#84cc16', 'Meadow', 'good')
+        if tags.get('landuse') == 'grass':
+            return ('#a3e635', 'Grass', 'good')
+        if tags.get('leisure') == 'golf_course':
+            return ('#16a34a', 'Golf course', 'good')
+        if tags.get('highway') in ('motorway', 'trunk', 'primary'):
+            return ('#f59e0b', 'Major road (caution)', 'caution')
+        if tags.get('amenity') == 'parking':
+            return ('#f59e0b', 'Parking lot (caution)', 'caution')
+        if tags.get('natural') == 'water':
+            return ('#dc2626', 'Water (avoid)', 'avoid')
+        if tags.get('waterway') in ('river', 'canal'):
+            return ('#dc2626', 'River/canal (avoid)', 'avoid')
+        if tags.get('landuse') in ('residential', 'industrial', 'commercial', 'retail'):
+            return ('#dc2626', 'Built-up (avoid)', 'avoid')
+        if tags.get('natural') == 'wood':
+            return ('#dc2626', 'Forest (avoid)', 'avoid')
+        return ('#888', 'Other', 'caution')
+
+    features = []
+    for el in data.get('elements', []):
+        tags = el.get('tags', {})
+        color, label, rating = classify(tags)
+        if el['type'] == 'node':
+            geom = [(el['lat'], el['lon'])]
+        elif el['type'] == 'way' and 'geometry' in el:
+            geom = [(p['lat'], p['lon']) for p in el['geometry']]
+        else:
+            continue
+        if not geom:
+            continue
+        features.append({
+            'label': label,
+            'color': color,
+            'rating': rating,
+            'geometry': geom,
+            'name': tags.get('name', ''),
+            'is_polygon': el['type'] == 'way' and len(geom) >= 4
+                          and geom[0] == geom[-1],
+        })
+    return {'features': features, 'error': None}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Folium map builder
+# ──────────────────────────────────────────────────────────────────────
+
+def build_satellite_map(
+    airport: Airport,
+    runway_heading_deg: float,
+    failure_point_low: tuple[float, float],
+    failure_point_high: tuple[float, float],
+    glide_radius_low_m: float,
+    glide_radius_high_m: float,
+    dead_zone_low_ft: float,
+    dead_zone_high_ft: float,
+    wind_from_deg: float = 0.0,
+    wind_speed_kt: float = 0.0,
+    candidates: Optional[list] = None,
+):
+    """Build a folium map centered on the airport with glide-footprint overlays.
+
+    Returns the folium Map object (caller renders via streamlit_folium).
+    """
+    import folium
+
+    # Center between airport and the high-altitude failure point
+    center_lat = (airport.lat + failure_point_high[0]) / 2
+    center_lon = (airport.lon + failure_point_high[1]) / 2
+
+    # Pick a starting zoom based on the larger glide footprint
+    # ~150 m/px at zoom 11, ~75 m/px at 12, etc.; pick so circle fits.
+    r = max(glide_radius_high_m, 1000.0)
+    if r > 15000:
+        zoom = 10
+    elif r > 7000:
+        zoom = 11
+    elif r > 3500:
+        zoom = 12
+    elif r > 1800:
+        zoom = 13
+    else:
+        zoom = 14
+
+    fmap = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=zoom,
+        tiles=None,
+        control_scale=True,
+    )
+
+    # Esri World Imagery (no API key)
+    folium.TileLayer(
+        tiles=('https://server.arcgisonline.com/ArcGIS/rest/services/'
+               'World_Imagery/MapServer/tile/{z}/{y}/{x}'),
+        attr='Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, '
+             'and the GIS User Community',
+        name='Esri Satellite',
+        max_zoom=19,
+        overlay=False,
+        control=True,
+    ).add_to(fmap)
+
+    folium.TileLayer(
+        'OpenStreetMap',
+        name='OpenStreetMap',
+        overlay=False,
+        control=True,
+    ).add_to(fmap)
+
+    # Airport marker
+    folium.Marker(
+        location=[airport.lat, airport.lon],
+        popup=folium.Popup(
+            f"<b>{airport.icao or airport.iata or airport.code}</b><br>"
+            f"{airport.name}<br>"
+            f"{airport.city}, {airport.country}<br>"
+            f"Elev {airport.elevation_ft:.0f} ft",
+            max_width=250,
+        ),
+        tooltip=airport.icao or airport.iata or airport.code,
+        icon=folium.Icon(color='blue', icon='plane', prefix='fa'),
+    ).add_to(fmap)
+
+    # Runway centerline (extend ~3 nm in departure direction)
+    end_lat, end_lon = offset_latlon(
+        airport.lat, airport.lon, runway_heading_deg, 3 * _M_PER_NM
+    )
+    folium.PolyLine(
+        [(airport.lat, airport.lon), (end_lat, end_lon)],
+        color='#fbbf24',
+        weight=3,
+        opacity=0.7,
+        tooltip=f"Departure heading {runway_heading_deg:.0f}°",
+    ).add_to(fmap)
+
+    # Glide footprint at LOW edge of dead zone (just above straight-ahead max)
+    if glide_radius_low_m > 0 and dead_zone_low_ft > 0:
+        folium.Circle(
+            location=list(failure_point_low),
+            radius=glide_radius_low_m,
+            color='#f87171',
+            weight=2,
+            fill=True,
+            fill_opacity=0.12,
+            popup=(f"Glide reach @ {dead_zone_low_ft:.0f} ft AGL "
+                   f"(low end of dead zone) — radius "
+                   f"{glide_radius_low_m / _M_PER_NM:.2f} nm"),
+            tooltip=f"Dead-zone LOW: {dead_zone_low_ft:.0f} ft AGL",
+        ).add_to(fmap)
+        folium.CircleMarker(
+            location=list(failure_point_low),
+            radius=4, color='#f87171', fill=True,
+            tooltip=f"Failure point @ {dead_zone_low_ft:.0f} ft",
+        ).add_to(fmap)
+
+    # Glide footprint at HIGH edge of dead zone (turnback critical altitude)
+    if glide_radius_high_m > 0:
+        folium.Circle(
+            location=list(failure_point_high),
+            radius=glide_radius_high_m,
+            color='#fbbf24',
+            weight=2,
+            fill=True,
+            fill_opacity=0.10,
+            popup=(f"Glide reach @ {dead_zone_high_ft:.0f} ft AGL "
+                   f"(top of dead zone / turnback critical) — radius "
+                   f"{glide_radius_high_m / _M_PER_NM:.2f} nm"),
+            tooltip=f"Dead-zone HIGH: {dead_zone_high_ft:.0f} ft AGL",
+        ).add_to(fmap)
+        folium.CircleMarker(
+            location=list(failure_point_high),
+            radius=4, color='#fbbf24', fill=True,
+            tooltip=f"Failure point @ {dead_zone_high_ft:.0f} ft",
+        ).add_to(fmap)
+
+    # Wind arrow (from departure end, pointing TO the wind source)
+    if wind_speed_kt > 0:
+        wind_lat, wind_lon = offset_latlon(
+            airport.lat, airport.lon, wind_from_deg, 1500.0
+        )
+        folium.PolyLine(
+            [(airport.lat, airport.lon), (wind_lat, wind_lon)],
+            color='#60a5fa', weight=2, opacity=0.8, dash_array='6,6',
+            tooltip=f"Wind from {wind_from_deg:.0f}° @ {wind_speed_kt:.0f} kt",
+        ).add_to(fmap)
+
+    # Landing candidates from OSM
+    if candidates:
+        good = folium.FeatureGroup(name='Good landing areas', show=True)
+        caution = folium.FeatureGroup(name='Caution', show=True)
+        avoid = folium.FeatureGroup(name='Avoid', show=False)
+        groups = {'good': good, 'caution': caution, 'avoid': avoid}
+
+        for feat in candidates:
+            grp = groups.get(feat['rating'], caution)
+            popup_text = (f"<b>{feat['label']}</b>"
+                          + (f"<br>{feat['name']}" if feat['name'] else ''))
+            if feat['is_polygon']:
+                folium.Polygon(
+                    locations=feat['geometry'],
+                    color=feat['color'], weight=1,
+                    fill=True, fill_opacity=0.35,
+                    popup=popup_text,
+                    tooltip=feat['label'],
+                ).add_to(grp)
+            elif len(feat['geometry']) > 1:
+                folium.PolyLine(
+                    feat['geometry'],
+                    color=feat['color'], weight=2, opacity=0.8,
+                    popup=popup_text, tooltip=feat['label'],
+                ).add_to(grp)
+            else:
+                folium.CircleMarker(
+                    location=feat['geometry'][0],
+                    radius=5, color=feat['color'],
+                    fill=True, fill_opacity=0.8,
+                    popup=popup_text, tooltip=feat['label'],
+                ).add_to(grp)
+
+        good.add_to(fmap)
+        caution.add_to(fmap)
+        avoid.add_to(fmap)
+
+    folium.LayerControl(collapsed=False).add_to(fmap)
+    return fmap
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Streamlit section
+# ──────────────────────────────────────────────────────────────────────
+
+def render_landing_map_section(
+    *,
+    critical_alt_low_ft: float,
+    critical_alt_high_ft: float,
+    straight_ahead_max_alt_ft: float,
+    ld_ratio: float,
+    best_glide_kias: float,
+    wind_speed_kt: float = 0.0,
+    wind_from_deg: float = 0.0,
+    liftoff_distance_ft: float = 0.0,
+):
+    """Render the satellite-map / forced-landing analysis section in the UI.
+
+    Parameters mirror what the simulator already computes. Call this
+    after the envelope / runway-zone analysis section.
+    """
+    import streamlit as st
+
+    st.markdown("---")
+    st.subheader("🛰️ Satellite Map — Forced-Landing Analysis")
+    st.caption(
+        "Visualize the **dead-zone glide footprint** at your chosen airport. "
+        "The dead zone is the altitude band where you can't land on the "
+        "remaining runway and can't make the turnback — these are the "
+        "altitudes where picking a forced-landing site matters most."
+    )
+
+    # ── Inputs ──
+    cols = st.columns([1, 1, 1, 1])
+    code = cols[0].text_input(
+        "Airport code (ICAO or IATA)", value="KSEZ",
+        help="ICAO 4-letter (e.g. KSEZ, EGLL) or IATA 3-letter (e.g. SDX, LHR)",
+    ).strip().upper()
+    runway_heading = cols[1].number_input(
+        "Departure runway heading (° true)",
+        min_value=0, max_value=359, value=30, step=10,
+        help="The magnetic/true heading you depart on. Used to position "
+             "the glide footprint along the climb-out path.",
+    )
+    climb_gradient = cols[2].number_input(
+        "Climb gradient (°)",
+        min_value=1.0, max_value=15.0, value=5.0, step=0.5,
+        help="Typical light-single climb gradient. Used to estimate where "
+             "the aircraft is when the engine quits at each altitude.",
+    )
+    fetch_osm = cols[3].checkbox(
+        "Find landing candidates (OSM)", value=False,
+        help="Query OpenStreetMap for nearby fields, golf courses, water, "
+             "and built-up areas within glide range. Requires internet; "
+             "may take a few seconds.",
+    )
+
+    if not code:
+        st.info("Enter an airport code to see the satellite map.")
+        return
+
+    airport = lookup_airport(code)
+    if airport is None:
+        st.warning(
+            f"Airport `{code}` not found. Try the ICAO code (e.g. `KSEZ` for "
+            "Sedona, `KORD` for Chicago O'Hare, `EGLL` for Heathrow)."
+        )
+        return
+
+    # ── Dead-zone band ──
+    dead_low = max(0.0, straight_ahead_max_alt_ft)
+    dead_high = max(critical_alt_low_ft, critical_alt_high_ft)
+    if dead_high <= dead_low:
+        st.success(
+            "✅ **No dead zone with current parameters.** Straight-ahead "
+            "landing coverage extends to or above the turnback critical "
+            "altitude. The glide footprint shown is at the turnback "
+            "critical altitude only."
+        )
+        # Still show a single ring at the turnback critical alt
+        dead_low = dead_high
+    elif dead_high <= 0:
+        st.info("Build the envelope first to compute the dead zone.")
+        return
+
+    # ── Failure points & glide radii ──
+    fp_low = estimate_failure_point(
+        airport.lat, airport.lon, runway_heading, dead_low,
+        climb_gradient, liftoff_distance_ft,
+    )
+    fp_high = estimate_failure_point(
+        airport.lat, airport.lon, runway_heading, dead_high,
+        climb_gradient, liftoff_distance_ft,
+    )
+    r_low_m = glide_radius_m(dead_low, ld_ratio)
+    r_high_m = glide_radius_m(dead_high, ld_ratio)
+
+    # ── Stats ──
+    info_cols = st.columns(4)
+    info_cols[0].metric(
+        "Airport",
+        airport.icao or airport.iata or airport.code,
+        f"{airport.name[:30]}",
+    )
+    info_cols[1].metric(
+        "Dead-zone band",
+        f"{dead_low:,.0f} – {dead_high:,.0f} ft",
+        f"{(dead_high - dead_low):,.0f} ft band",
+    )
+    info_cols[2].metric(
+        "Glide reach (low)",
+        f"{r_low_m / _M_PER_NM:.2f} nm",
+        f"@ {dead_low:,.0f} ft, L/D {ld_ratio:.1f}",
+    )
+    info_cols[3].metric(
+        "Glide reach (high)",
+        f"{r_high_m / _M_PER_NM:.2f} nm",
+        f"@ {dead_high:,.0f} ft, L/D {ld_ratio:.1f}",
+    )
+
+    if wind_speed_kt > 0:
+        drift_low = wind_drift_m(dead_low, ld_ratio, best_glide_kias, wind_speed_kt)
+        drift_high = wind_drift_m(dead_high, ld_ratio, best_glide_kias, wind_speed_kt)
+        st.caption(
+            f"⚠️ Wind {wind_speed_kt:.0f} kt from {wind_from_deg:.0f}° "
+            f"will drift the footprint downwind by ~"
+            f"{drift_low / _M_PER_NM:.2f} nm (low) / "
+            f"{drift_high / _M_PER_NM:.2f} nm (high). "
+            f"The circles below are still-air; mentally bias the reachable "
+            f"area downwind."
+        )
+
+    # ── Optional: fetch OSM landing candidates ──
+    candidates = None
+    if fetch_osm:
+        with st.spinner("Querying OpenStreetMap for landing candidates..."):
+            result = fetch_landing_candidates(
+                fp_high[0], fp_high[1], r_high_m,
+            )
+        if result['error']:
+            st.warning(f"OSM query failed: {result['error']}")
+        else:
+            candidates = result['features']
+            st.caption(
+                f"Found **{len(candidates)}** features within glide range. "
+                f"Toggle layers via the control on the map."
+            )
+
+    # ── Render the map ──
+    try:
+        from streamlit_folium import st_folium
+    except ImportError:
+        st.error(
+            "`streamlit-folium` is not installed. Add it to requirements.txt "
+            "and rebuild the container."
+        )
+        return
+
+    fmap = build_satellite_map(
+        airport=airport,
+        runway_heading_deg=runway_heading,
+        failure_point_low=fp_low,
+        failure_point_high=fp_high,
+        glide_radius_low_m=r_low_m,
+        glide_radius_high_m=r_high_m,
+        dead_zone_low_ft=dead_low,
+        dead_zone_high_ft=dead_high,
+        wind_from_deg=wind_from_deg,
+        wind_speed_kt=wind_speed_kt,
+        candidates=candidates,
+    )
+    st_folium(fmap, height=600, width=None, returned_objects=[])
+
+    # ── Interpretation guide ──
+    with st.expander("How to read this map", expanded=False):
+        st.markdown(f"""
+- **Blue plane icon** — airport reference point (`{airport.icao or airport.code}`).
+- **Yellow line** — runway departure centerline (heading {runway_heading:.0f}°).
+- **Red dot + faint red circle** — engine failure at the **low end** of the
+  dead zone ({dead_low:,.0f} ft AGL). Glide footprint radius
+  ≈ **{r_low_m / _M_PER_NM:.2f} nm**. *Above the runway-survival altitude
+  but too low to turn back* — pick a landing site within this circle.
+- **Yellow dot + faint yellow circle** — engine failure at the **top** of
+  the dead zone ({dead_high:,.0f} ft AGL — the turnback critical
+  altitude). Glide footprint ≈ **{r_high_m / _M_PER_NM:.2f} nm**. Above
+  this altitude the turnback becomes feasible.
+- **Dashed blue line** — wind direction (from).
+- L/D used = **{ld_ratio:.1f}** (best glide, with prop drag and current
+  configuration). Wind effects are noted above but not drawn on the
+  circles.
+
+**Use the satellite imagery** to spot:
+- Open fields, golf courses, dry lake beds, large parking lots → good.
+- Highways → only in extremis (wires, traffic, signage).
+- Water, dense forest, residential blocks → avoid.
+
+When OSM landing candidates are enabled, color-coded overlays mark these
+features automatically. Toggle layers via the control in the upper-right
+of the map.
+""")

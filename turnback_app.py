@@ -8,13 +8,16 @@ zone after engine failure at various altitudes AGL.
 import streamlit as st
 import plotly.graph_objects as go
 import math
+import pandas as pd
 
 from engine.aircraft_config import AIRCRAFT_CONFIG
+from engine.poh_data import POH_GROUND_ROLL_FT, estimate_ground_roll
 from analysis.turnback_simulator import (
     build_turnback_envelope, simulate_turnback, optimize_turnback, best_glide_kias,
     simulate_straight_ahead, find_straight_ahead_max_altitude,
     _select_vbg_override,
 )
+from analysis.data_card import build_takeoff_data_card
 
 # ── Page config for standalone mode ──
 try:
@@ -149,119 +152,352 @@ def run_turnback_page():
     )
 
     # Post-failure glide speed mode
+    # Charlie Precourt feedback: Vbg as a label is misleading for the turn.
+    # Promote the OPERATIONAL targets (Vs(φ)+10 and 1.3·Vs(φ)) and demote
+    # the aerodynamic best-glide modes to "Advanced / experimentation".
     speed_mode_options = {
-        'fixed': 'Maintain failure speed',
-        'best_glide_1g': 'Best glide — wings level (1g)',
-        'best_glide_nz': 'Best glide — adjusted for load factor',
+        'vs_plus_10':    'Vs at bank + 10 kt  (recommended)',
+        'vs_x_1p3':      '1.3 × Vs at bank',
+        'fixed':         'Maintain failure speed',
+        'best_glide_1g': 'Best L/D — wings level (advanced)',
+        'best_glide_nz': 'Best L/D — adjusted for load factor (advanced)',
     }
     speed_mode = st.sidebar.radio(
         "Glide speed mode", list(speed_mode_options.keys()),
         format_func=lambda x: speed_mode_options[x], index=0,
+        help="Operational presets target a speed safely above the turning "
+             "stall.  Best-L/D modes target the aerodynamic optimum and "
+             "are useful for experimentation but are too close to stall "
+             "for most pilots in the turn.",
     )
 
     # Bank angle
-    bank_angle = st.sidebar.slider("Bank angle (°)", min_value=10, max_value=60, value=30, step=5)
+    bank_angle = st.sidebar.slider("Bank angle (°)", min_value=10, max_value=60, value=45, step=5)
+
+    # Always show the operational target speeds for the selected bank — even
+    # if user picked a different speed_mode — so they see what Charlie's
+    # recommended numbers would be.
+    from analysis.turnback_simulator import operational_turn_speeds
+    _ops = operational_turn_speeds(config, weight, bank_angle, 0, 0,
+                                    landing_flaps=False)
+    st.sidebar.info(
+        f"**At {bank_angle}° bank (nz={_ops['nz']:.2f}):**\n\n"
+        f"• Vs(φ) = **{_ops['vs_kias']:.0f} KIAS**\n\n"
+        f"• Vs(φ) + 10 kt = **{_ops['vs_plus_10_kias']:.0f} KIAS**\n\n"
+        f"• 1.3 × Vs(φ) = **{_ops['vs_x_1p3_kias']:.0f} KIAS**"
+    )
 
     vbg_clean_kias = 0
     vbg_geardown_kias = 0
     vbg_landing_kias = 0
-    if speed_mode != 'fixed':
+    if speed_mode in ('best_glide_1g', 'best_glide_nz'):
         # Compute and display best glide speeds
         vbg_1g, cl_opt, ld_max = best_glide_kias(config, weight, 1.0, 0, 0)
         st.sidebar.info(
-            f"**Computed best glide (1g):** {vbg_1g:.0f} KIAS\n\n"
+            f"**Computed best L/D (1g):** {vbg_1g:.0f} KIAS\n\n"
             f"CL_opt = {cl_opt:.3f} · L/D_max = {ld_max:.1f}"
         )
         if speed_mode == 'best_glide_nz':
             nz_preview = 1.0 / math.cos(math.radians(bank_angle))
             vbg_turn, _, _ = best_glide_kias(config, weight, nz_preview, 0, 0)
             st.sidebar.info(
-                f"**Computed best glide ({bank_angle}° bank, nz={nz_preview:.2f}):** "
+                f"**Computed best L/D ({bank_angle}° bank, nz={nz_preview:.2f}):** "
                 f"{vbg_turn:.0f} KIAS"
             )
-        st.sidebar.markdown("**Best-glide overrides** *(0 = auto)*")
-        vbg_clean_kias = st.sidebar.number_input(
-            "Vbg clean (gear up, flaps up)",
-            min_value=0, max_value=300, value=0, step=1,
-            help="POH best-glide speed for clean configuration "
-                 "(gear up, flaps up). 0 = use aerodynamic computation.",
-        )
-        vbg_geardown_kias = st.sidebar.number_input(
-            "Vbg gear down (gear ↓, flaps up)",
-            min_value=0, max_value=300, value=0, step=1,
-            help="POH best-glide speed with gear extended, flaps up. "
-                 "0 = use aerodynamic computation.",
-        )
-        vbg_landing_kias = st.sidebar.number_input(
-            "Vbg landing (gear ↓, flaps ↓)",
-            min_value=0, max_value=300, value=0, step=1,
-            help="POH best-glide speed with gear and flaps extended "
-                 "(landing configuration). 0 = use aerodynamic computation.",
-        )
+        with st.sidebar.expander("Advanced — POH Vbg overrides", expanded=False):
+            st.caption("Override the aerodynamic computation with POH best-glide values. *(0 = auto)*")
+            vbg_clean_kias = st.number_input(
+                "Vbg clean (gear up, flaps up)",
+                min_value=0, max_value=300, value=0, step=1,
+                help="POH best-glide speed for clean configuration "
+                     "(gear up, flaps up). 0 = use aerodynamic computation.",
+            )
+            vbg_geardown_kias = st.number_input(
+                "Vbg gear down (gear ↓, flaps up)",
+                min_value=0, max_value=300, value=0, step=1,
+                help="POH best-glide speed with gear extended, flaps up. "
+                     "0 = use aerodynamic computation.",
+            )
+            vbg_landing_kias = st.number_input(
+                "Vbg landing (gear ↓, flaps ↓)",
+                min_value=0, max_value=300, value=0, step=1,
+                help="POH best-glide speed with gear and flaps extended "
+                     "(landing configuration). 0 = use aerodynamic computation.",
+            )
 
-    # Flap setting — controls flaps during takeoff climb and turn
+    # Flap setting — split into takeoff vs turn (Charlie #2).
+    # Takeoff flap drives the climb-out / liftoff-distance regime.
+    # Turn flap drives the post-failure aerodynamics.  These are usually
+    # different in real life: a pilot may depart with takeoff flaps deployed
+    # but retract them before initiating any turnback.
     flap_options = {0: "Clean", 1: "Takeoff / 15°", 2: "Landing / Full"}
-    flap_setting = st.sidebar.radio("Takeoff / turn flap setting", list(flap_options.keys()),
-                                     format_func=lambda x: flap_options[x], index=0,
-                                     help="Flap position during climb-out and the turn. "
-                                          "With runway model ON, landing flaps are "
-                                          "auto-deployed on final + forward slip as needed.")
+    takeoff_flap_setting = st.sidebar.radio(
+        "Takeoff flap setting", list(flap_options.keys()),
+        format_func=lambda x: flap_options[x], index=0,
+        help="Flap position used during the takeoff ground-roll and initial climb. "
+             "Recorded for reference today; will drive computed liftoff distance "
+             "in a future update.  Real aircraft typically take off with a small "
+             "flap deflection (e.g. flaps 10) and retract before any turnback.",
+    )
+    flap_setting = st.sidebar.radio(
+        "Turn flap setting", list(flap_options.keys()),
+        format_func=lambda x: flap_options[x], index=0,
+        help="Flap position during the engine-out turn.  Most pilots are taught "
+             "to retract takeoff flaps before initiating the turnback because "
+             "the higher CLmax doesn't help — clean produces less drag and "
+             "preserves more energy.  With runway model ON, landing flaps are "
+             "auto-deployed on final + forward slip as needed.",
+    )
 
     # Reaction time
     reaction_time = st.sidebar.slider("Reaction time (s)", min_value=0.0, max_value=10.0,
                                        value=3.0, step=0.5)
 
-    # Field elevation
-    field_elev = st.sidebar.number_input("Field elevation (ft MSL)", min_value=0, max_value=14000,
-                                          value=0, step=100)
-
-    # ISA deviation
-    isa_dev = st.sidebar.number_input("ISA deviation (°C)", min_value=-40, max_value=50,
-                                       value=0, step=1)
-
-    # Wind
+    # ── Departure Airport (optional) ──
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Wind")
-    wind_speed = st.sidebar.number_input("Surface wind speed (kt)", min_value=0, max_value=60,
-                                          value=0, step=5)
-    wind_dir_options = {
-        0: "Headwind (0°)",
-        45: "Right-quartering head (45°)",
-        90: "Right crosswind (90°)",
-        135: "Right-quartering tail (135°)",
-        180: "Tailwind (180°)",
-        225: "Left-quartering tail (225°)",
-        270: "Left crosswind (270°)",
-        315: "Left-quartering head (315°)",
-    }
-    wind_from_deg = st.sidebar.select_slider(
-        "Wind direction (relative to runway)",
-        options=list(range(0, 360, 5)),
-        value=0,
-        format_func=lambda d: wind_dir_options.get(d, f"{d}°"),
+    st.sidebar.subheader("Departure Airport")
+    use_airport_db = st.sidebar.checkbox(
+        "Look up airport from database",
+        value=False,
+        help="Pick an airport + runway to auto-fill field elevation, "
+             "runway heading, and runway length from the OurAirports database. "
+             "Wind direction will be entered in true degrees (matching METAR), "
+             "and headwind/crosswind are auto-computed.",
     )
-    if wind_speed > 0:
-        st.sidebar.caption(f"Surface wind {wind_speed} kt from {wind_from_deg}° relative to runway heading")
+
+    selected_airport_ident = ""
+    selected_runway_ident = ""
+    runway_heading_true = 0.0
+    runway_length_db = 0.0  # populated from DB when airport selected
+
+    if use_airport_db:
+        from engine.airport_db import (
+            load_airports, load_runway_ends, wind_components,
+        )
+        airports_df = load_airports()
+        # Default search to KSEZ if present
+        default_idx = 0
+        if "KSEZ" in airports_df["ident"].values:
+            default_idx = int(airports_df.index[airports_df["ident"] == "KSEZ"][0])
+        airport_idx = st.sidebar.selectbox(
+            "Airport",
+            options=range(len(airports_df)),
+            format_func=lambda i: airports_df.iloc[i]["display_name"],
+            index=default_idx,
+            help="Type to search by ICAO/local code or name.",
+        )
+        airport_row = airports_df.iloc[airport_idx]
+        selected_airport_ident = airport_row["ident"]
+        field_elev = int(round(float(airport_row["elevation_ft"])))
+
+        runway_ends = load_runway_ends(selected_airport_ident)
+        if runway_ends.empty:
+            st.sidebar.warning(
+                f"No runway data available for {selected_airport_ident}. "
+                "Falling back to manual entry."
+            )
+            use_airport_db = False
+        else:
+            rwy_idx = st.sidebar.selectbox(
+                "Runway",
+                options=range(len(runway_ends)),
+                format_func=lambda i: (
+                    f"{runway_ends.iloc[i]['rwy_ident']} — "
+                    f"{int(runway_ends.iloc[i]['length_ft'])} ft, "
+                    f"hdg {runway_ends.iloc[i]['heading_degT']:.0f}°T"
+                    if pd.notna(runway_ends.iloc[i]['heading_degT'])
+                    else f"{runway_ends.iloc[i]['rwy_ident']} — heading unknown"
+                ),
+            )
+            rwy_row = runway_ends.iloc[rwy_idx]
+            selected_runway_ident = str(rwy_row["rwy_ident"])
+            runway_length_db = float(rwy_row["length_ft"])
+            if pd.notna(rwy_row["heading_degT"]):
+                runway_heading_true = float(rwy_row["heading_degT"])
+            else:
+                # Fall back to numeric runway ident × 10
+                try:
+                    digits = "".join(c for c in selected_runway_ident if c.isdigit())
+                    runway_heading_true = float(digits) * 10.0 if digits else 0.0
+                except ValueError:
+                    runway_heading_true = 0.0
+            # Use threshold elevation if provided (more accurate than airport elev)
+            if pd.notna(rwy_row.get("threshold_elevation_ft")):
+                field_elev = int(round(float(rwy_row["threshold_elevation_ft"])))
+            st.sidebar.caption(
+                f"**{selected_airport_ident} RW {selected_runway_ident}** — "
+                f"elev {field_elev} ft, "
+                f"hdg {runway_heading_true:.0f}°T, "
+                f"length {int(runway_length_db)} ft"
+            )
+
+    if not use_airport_db:
+        # Field elevation (manual)
+        field_elev = st.sidebar.number_input(
+            "Field elevation (ft MSL)", min_value=0, max_value=14000,
+            value=0, step=100,
+        )
+
+    # ── Weather ──
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Weather")
+    weather_mode = st.sidebar.radio(
+        "Weather source",
+        ["Manual inputs", "Paste METAR"],
+        index=0,
+        horizontal=True,
+        help="Manual: enter ISA deviation and wind directly. "
+             "METAR: paste a raw METAR string (from ForeFlight / "
+             "aviationweather.gov) to auto-fill temperature, altimeter, and surface wind.",
+    )
+
+    parsed_metar = None
+    altimeter_inhg = 29.92
+
+    if weather_mode == "Paste METAR":
+        from engine.metar_parser import parse_metar, isa_deviation_c
+        raw_metar = st.sidebar.text_area(
+            "METAR",
+            value="",
+            height=80,
+            placeholder="KSEZ 251853Z 24008KT 10SM CLR 22/M01 A3008",
+            help="Paste the full raw METAR string. Remarks (RMK …) are ignored.",
+        )
+        parsed_metar = parse_metar(raw_metar) if raw_metar.strip() else None
+        if parsed_metar is None and raw_metar.strip():
+            st.sidebar.error("Could not parse METAR — falling back to manual values.")
+
+    if parsed_metar is not None:
+        from engine.metar_parser import isa_deviation_c
+        # Temperature → ISA deviation
+        if parsed_metar.temperature_c is not None:
+            isa_dev = int(round(isa_deviation_c(parsed_metar.temperature_c, field_elev)))
+        else:
+            isa_dev = 0
+        # Altimeter
+        if parsed_metar.altimeter_inhg is not None:
+            altimeter_inhg = parsed_metar.altimeter_inhg
+        # Wind
+        if parsed_metar.wind_variable or parsed_metar.wind_from_deg is None:
+            wind_from_true = 0
+            st.sidebar.caption("Wind variable — assuming calm/headwind for sim.")
+        else:
+            wind_from_true = int(parsed_metar.wind_from_deg)
+        wind_speed = int(parsed_metar.wind_speed_kt)
+        # Show summary
+        summary_bits = [f"**Parsed:** {parsed_metar.station}"]
+        if parsed_metar.temperature_c is not None:
+            summary_bits.append(f"OAT {parsed_metar.temperature_c:.0f}°C (ISA{isa_dev:+d})")
+        summary_bits.append(f"alt {altimeter_inhg:.2f}\"")
+        if parsed_metar.wind_variable:
+            summary_bits.append(f"wind VRB at {wind_speed} kt")
+        else:
+            gust = f"G{parsed_metar.wind_gust_kt}" if parsed_metar.wind_gust_kt else ""
+            summary_bits.append(f"wind {wind_from_true:03d}/{wind_speed:02d}{gust} kt")
+        st.sidebar.success(" · ".join(summary_bits))
+    else:
+        # Manual weather inputs
+        isa_dev = st.sidebar.number_input(
+            "ISA deviation (°C)", min_value=-40, max_value=50,
+            value=0, step=1,
+            help="Difference between actual OAT and ISA temperature at field elevation.",
+        )
+        if use_airport_db:
+            altimeter_inhg = st.sidebar.number_input(
+                "Altimeter (inHg)", min_value=27.50, max_value=31.50,
+                value=29.92, step=0.01, format="%.2f",
+                help="Optional. Used for pressure-altitude logging only.",
+            )
+        wind_speed = st.sidebar.number_input(
+            "Surface wind speed (kt)", min_value=0, max_value=60,
+            value=0, step=5,
+        )
+        if use_airport_db:
+            wind_from_true = st.sidebar.number_input(
+                "Surface wind FROM (°true)", min_value=0, max_value=359,
+                value=int(round(runway_heading_true)) if runway_heading_true else 0, step=5,
+                help="Wind direction in true degrees (matches METAR). "
+                     "Headwind/crosswind components are computed from runway heading.",
+            )
+        else:
+            wind_dir_options = {
+                0: "Headwind (0°)",
+                45: "Right-quartering head (45°)",
+                90: "Right crosswind (90°)",
+                135: "Right-quartering tail (135°)",
+                180: "Tailwind (180°)",
+                225: "Left-quartering tail (225°)",
+                270: "Left crosswind (270°)",
+                315: "Left-quartering head (315°)",
+            }
+            wind_from_deg = st.sidebar.select_slider(
+                "Wind direction (relative to runway)",
+                options=list(range(0, 360, 5)),
+                value=0,
+                format_func=lambda d: wind_dir_options.get(d, f"{d}°"),
+            )
+            wind_from_true = wind_from_deg  # legacy: relative-to-runway used directly
+
+    # Convert true wind to runway-relative if airport DB is in use
+    if use_airport_db:
+        from engine.airport_db import wind_components
+        hw, xw, rel = wind_components(wind_from_true, wind_speed, runway_heading_true)
+        wind_from_deg = int(round(rel))  # relative angle for sim API
+        if wind_speed > 0:
+            xw_label = f"{abs(xw):.1f} kt {'right' if xw > 0 else 'left'}" if abs(xw) > 0.05 else "0 kt"
+            hw_label = f"{abs(hw):.1f} kt {'headwind' if hw > 0 else 'tailwind'}" if abs(hw) > 0.05 else "0 kt"
+            st.sidebar.caption(
+                f"Wind {wind_from_true:03d}/{wind_speed:02d} kt → "
+                f"{hw_label}, {xw_label} cross"
+            )
+    else:
+        # Already runway-relative (legacy mode)
+        wind_from_deg = wind_from_true
+        if wind_speed > 0:
+            st.sidebar.caption(
+                f"Surface wind {wind_speed} kt from {wind_from_deg}° relative to runway heading"
+            )
     
-    # Wind at altitude (ForeFlight data)
-    wind_alts_caption = st.sidebar.caption(
-        "*Wind at altitude: get from ForeFlight weather winds aloft tab*"
+    # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4)
+    st.sidebar.caption(
+        "*Wind at altitude: get from ForeFlight winds-aloft tab.  "
+        "Add or remove rows as needed; surface (0 ft) is the wind above.*"
     )
-    wind_1000_kt = st.sidebar.number_input(
-        "Wind at 1000 ft AGL (kt)", min_value=0, max_value=100,
-        value=wind_speed, step=5,
-        help="Wind speed at 1000 ft AGL. Default is surface wind."
+    default_wind_rows = pd.DataFrame([
+        {"Altitude AGL (ft)": 1000, "Speed (kt)": float(wind_speed)},
+        {"Altitude AGL (ft)": 2000, "Speed (kt)": float(wind_speed)},
+        {"Altitude AGL (ft)": 3000, "Speed (kt)": float(wind_speed)},
+    ])
+    wind_profile_df = st.sidebar.data_editor(
+        default_wind_rows,
+        num_rows="dynamic",
+        hide_index=True,
+        key="wind_profile_editor",
+        column_config={
+            "Altitude AGL (ft)": st.column_config.NumberColumn(
+                min_value=0, max_value=20000, step=100, format="%d"
+            ),
+            "Speed (kt)": st.column_config.NumberColumn(
+                min_value=0, max_value=200, step=1, format="%d"
+            ),
+        },
     )
-    wind_2000_kt = st.sidebar.number_input(
-        "Wind at 2000 ft AGL (kt)", min_value=0, max_value=100,
-        value=wind_speed, step=5,
-        help="Wind speed at 2000 ft AGL. Default is surface wind."
-    )
-    wind_3000_kt = st.sidebar.number_input(
-        "Wind at 3000 ft AGL (kt)", min_value=0, max_value=100,
-        value=wind_speed, step=5,
-        help="Wind speed at 3000 ft AGL (critical for turnback planning)."
-    )
+    # Build wind_profile list of (alt_ft, speed_kt) tuples for the engine,
+    # ignoring blank or zero-altitude rows.
+    wind_profile = []
+    try:
+        for _, row in wind_profile_df.iterrows():
+            a = row.get("Altitude AGL (ft)")
+            s = row.get("Speed (kt)")
+            if pd.notna(a) and pd.notna(s) and float(a) > 0:
+                wind_profile.append((float(a), float(s)))
+    except Exception:
+        wind_profile = []
+
+    # Legacy wind_1000/2000/3000 kept zeroed — wind_profile takes precedence.
+    wind_1000_kt = 0
+    wind_2000_kt = 0
+    wind_3000_kt = 0
 
     # Runway Geometry
     st.sidebar.markdown("---")
@@ -277,10 +513,56 @@ def run_turnback_page():
     )
     runway_friction = 1.0  # default = standard dry asphalt
     if use_runway:
-        runway_length = st.sidebar.number_input("Runway length (ft)", min_value=1000, max_value=15000,
-                                                  value=5500, step=100)
-        liftoff_distance = st.sidebar.number_input("Liftoff distance (ft)", min_value=100, max_value=10000,
-                                                     value=1000, step=100)
+        # Default runway length to DB value if airport selected
+        _default_rwy_len = int(round(runway_length_db)) if runway_length_db > 0 else 5500
+        _default_rwy_len = max(1000, min(15000, _default_rwy_len))
+        if runway_length_db > 0:
+            st.sidebar.caption(
+                f"Runway length pre-filled from {selected_airport_ident} "
+                f"RW {selected_runway_ident}."
+            )
+        runway_length = st.sidebar.number_input(
+            "Runway length (ft)", min_value=1000, max_value=15000,
+            value=_default_rwy_len, step=100,
+        )
+
+        # Charlie #5b — POH-derived liftoff distance estimator.
+        # If a POH reference number exists for this aircraft, default to ON
+        # and scale by (W/MTOW)² × 1/σ.  Otherwise the field is a manual entry.
+        _poh_key = ac_key[0] if ac_key[0] in POH_GROUND_ROLL_FT else None
+        if _poh_key:
+            use_poh_liftoff = st.sidebar.checkbox(
+                "Estimate liftoff distance from POH",
+                value=True,
+                help=f"Use the published POH ground-roll for the {_poh_key} "
+                     "(sea level, ISA, MTOW) and scale by weight² and "
+                     "1/density-ratio for the selected field/ISA conditions.  "
+                     "Uncheck to enter the value manually.",
+            )
+            if use_poh_liftoff:
+                _est = estimate_ground_roll(_poh_key, config, weight, field_elev, isa_dev)
+                liftoff_distance = float(round(_est.ground_roll_ft, 0)) if _est else 1000.0
+                if _est:
+                    st.sidebar.caption(
+                        f"POH base {int(_est.base_sl_mtow_ft)} ft · "
+                        f"weight × {_est.weight_factor:.2f} · "
+                        f"density × {_est.density_factor:.2f} (DA "
+                        f"{int(_est.density_altitude_ft):,} ft) → "
+                        f"**{int(round(_est.ground_roll_ft)):,} ft**"
+                    )
+            else:
+                liftoff_distance = float(st.sidebar.number_input(
+                    "Liftoff distance (ft)", min_value=100, max_value=10000,
+                    value=1000, step=100,
+                ))
+        else:
+            st.sidebar.caption(
+                f"*No POH reference for {ac_key[0]} — enter manually.*"
+            )
+            liftoff_distance = float(st.sidebar.number_input(
+                "Liftoff distance (ft)", min_value=100, max_value=10000,
+                value=1000, step=100,
+            ))
         # Runway condition friction coefficient
         runway_condition_options = {
             'dry': ('Dry asphalt', 1.0),
@@ -380,6 +662,7 @@ def run_turnback_page():
                 alt_step=alt_step, max_alt=max_alt,
                 wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                 wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                wind_profile=wind_profile,
                 runway_length=runway_length, liftoff_distance=liftoff_distance,
                 aim_point=aim_point, flap_on_return=flap_on_return,
                 speed_mode=speed_mode,
@@ -403,6 +686,7 @@ def run_turnback_page():
             'airspeed': airspeed,
             'bank_angle': bank_angle,
             'flap_setting': flap_setting,
+            'takeoff_flap_setting': takeoff_flap_setting,
             'reaction_time': reaction_time,
             'ac_key': ac_key,
             'wind_speed': wind_speed,
@@ -411,6 +695,15 @@ def run_turnback_page():
             'liftoff_distance': liftoff_distance,
             'aim_point': envelope[0]['left'].get('computed_aim_y', 0.0) if envelope else 0.0,
             'speed_mode': speed_mode,
+            # Data-card extras
+            'airport_ident': selected_airport_ident,
+            'runway_ident': selected_runway_ident,
+            'field_elev': field_elev,
+            'isa_dev': isa_dev,
+            'altimeter_inhg': altimeter_inhg,
+            'wind_profile': wind_profile,
+            'prop_state': prop_state,
+            'gear_down': gear_down,
         }
 
     if run_optimizer:
@@ -422,6 +715,7 @@ def run_turnback_page():
                 field_elevation=field_elev, isa_dev=isa_dev,
                 wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                 wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                wind_profile=wind_profile,
                 runway_length=runway_length, liftoff_distance=liftoff_distance,
                 speed_mode=speed_mode,
                 prop_state=prop_state,
@@ -454,6 +748,7 @@ def run_turnback_page():
                     alt_step=alt_step, max_alt=max_alt,
                     wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                     wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                    wind_profile=wind_profile,
                     runway_length=runway_length, liftoff_distance=liftoff_distance,
                     aim_point=aim_point, flap_on_return=best_flap_on_return,
                     speed_mode=speed_mode,
@@ -476,6 +771,7 @@ def run_turnback_page():
                 'airspeed': airspeed,
                 'bank_angle': best['bank_angle'],
                 'flap_setting': best_flap,
+                'takeoff_flap_setting': takeoff_flap_setting,
                 'reaction_time': reaction_time,
                 'ac_key': ac_key,
                 'wind_speed': wind_speed,
@@ -484,6 +780,14 @@ def run_turnback_page():
                 'liftoff_distance': liftoff_distance,
                 'aim_point': env[0]['left'].get('computed_aim_y', 0.0) if env else 0.0,
                 'speed_mode': speed_mode,
+                'airport_ident': selected_airport_ident,
+                'runway_ident': selected_runway_ident,
+                'field_elev': field_elev,
+                'isa_dev': isa_dev,
+                'altimeter_inhg': altimeter_inhg,
+                'wind_profile': wind_profile,
+                'prop_state': prop_state,
+                'gear_down': gear_down,
             }
 
     # ── Display optimizer results ──
@@ -621,16 +925,109 @@ def run_turnback_page():
         si = crit_result['speed_info']
         if si['mode'] in ('best_glide_1g', 'best_glide_nz'):
             speed_cols = st.columns(4)
-            speed_cols[0].metric("Best Glide (1g)", f"{si['vbg_1g_kias']:.0f} KIAS")
+            speed_cols[0].metric("Best L/D (1g)", f"{si['vbg_1g_kias']:.0f} KIAS")
             speed_cols[1].metric("L/D max", f"{si['ld_max']:.1f}")
             speed_cols[2].metric("CL (best L/D)", f"{si['cl_best']:.3f}")
             if si['mode'] == 'best_glide_nz' and 'vbg_turn_kias' in si:
                 speed_cols[3].metric(
-                    f"Best Glide ({res['bank_angle']}° bank)",
+                    f"Best L/D ({res['bank_angle']}° bank)",
                     f"{si['vbg_turn_kias']:.0f} KIAS",
                 )
             else:
                 speed_cols[3].metric("Speed Mode", "Constant 1g")
+        elif si['mode'] in ('vs_plus_10', 'vs_x_1p3'):
+            speed_cols = st.columns(4)
+            speed_cols[0].metric(f"Vs at {res['bank_angle']}° bank",
+                                  f"{si.get('vs_at_bank_kias', 0):.0f} KIAS")
+            speed_cols[1].metric("Vs(φ) + 10 kt",
+                                  f"{si.get('vs_plus_10_kias', 0):.0f} KIAS")
+            speed_cols[2].metric("1.3 × Vs(φ)",
+                                  f"{si.get('vs_x_1p3_kias', 0):.0f} KIAS")
+            speed_cols[3].metric("Target flown",
+                                  f"{si.get('target_kias', 0):.0f} KIAS",
+                                  delta=f"nz={si.get('nz_bank', 0):.2f}")
+
+    # ── Turn statistics (Charlie #7: training output) ──
+    # Pull the critical-altitude trajectory and surface:
+    #   - Total degrees of turn the maneuver requires
+    #   - Altitude lost per 180° of turning
+    # so a pilot can practice this at altitude and pick a personal safety factor.
+    if crit_result is not None:
+        total_turn_deg = crit_result.get('total_turn_deg', 0.0)
+        loss_per_180 = crit_result.get('altitude_loss_per_180')
+        increments = crit_result.get('altitude_at_180_increments', [])
+        if total_turn_deg > 0:
+            st.markdown("---")
+            st.subheader("Turn Statistics (Training Output)")
+            st.caption(
+                "From the critical-altitude turnback trajectory.  "
+                "Practice this at altitude to calibrate your personal safety factor."
+            )
+            ts_cols = st.columns(3)
+            ts_cols[0].metric(
+                "Total degrees of turn",
+                f"{total_turn_deg:.0f}°",
+                help="Total heading change required for the full turnback "
+                     "maneuver (turn + return-to-runway alignment + any orbit/circuit).",
+            )
+            if loss_per_180 is not None:
+                ts_cols[1].metric(
+                    "Altitude loss per 180°",
+                    f"{loss_per_180:.0f} ft",
+                    help="Average altitude lost per half-turn during the maneuver. "
+                         "Go to altitude, fly the same bank/airspeed, time a 180° turn, "
+                         "and verify your altitude loss is at or below this number.",
+                )
+            n_half_turns = len(increments) - 1 if len(increments) > 1 else 0
+            ts_cols[2].metric(
+                "Half-turns flown",
+                f"{n_half_turns}",
+                help="Number of 180° increments captured in the maneuver.",
+            )
+            if len(increments) > 1:
+                with st.expander("Altitude AGL at each 180° increment", expanded=False):
+                    inc_data = [
+                        {
+                            "Cumulative turn (°)": int(p['turn_deg']),
+                            "Altitude AGL (ft)": int(round(p['altitude_agl'])),
+                            "Cumulative loss (ft)": int(round(increments[0]['altitude_agl'] - p['altitude_agl'])),
+                        }
+                        for p in increments
+                    ]
+                    st.dataframe(pd.DataFrame(inc_data), hide_index=True, use_container_width=True)
+
+    # ── Takeoff Data Card (TOLD-style) ──
+    # Charlie Precourt's #1 ask: a printable single-page card pilots can
+    # take to the cockpit with the day-of-flight turnback decision numbers.
+    st.markdown("---")
+    st.subheader("📋 Takeoff Data Card")
+    st.caption(
+        "Single-page TOLD-style summary of this scenario's turnback decision "
+        "numbers.  Built for the EAA McSpadden Project — print and keep in the "
+        "cockpit alongside your existing takeoff data card."
+    )
+    try:
+        card_html = build_takeoff_data_card(res, crit_result, safety_margin_factor)
+        dc_cols = st.columns([1, 1, 2])
+        with dc_cols[0]:
+            st.download_button(
+                "📥 Download HTML",
+                data=card_html.encode("utf-8"),
+                file_name=f"TOLD_card_{res.get('airport_ident', 'card') or 'card'}_{res.get('runway_ident', '')}.html",
+                mime="text/html",
+                help="Download the data card as a self-contained HTML file. "
+                     "Open in a browser and use Print → Save as PDF to keep "
+                     "in your flight bag.",
+            )
+        with dc_cols[1]:
+            show_card = st.toggle(
+                "Preview card in app", value=False,
+                help="Render the printable card here in the page.",
+            )
+        if show_card:
+            st.components.v1.html(card_html, height=1400, scrolling=True)
+    except Exception as e:
+        st.error(f"Could not build data card: {e}")
 
     # Stall warning — determine the actual speed flown during the turn
     speed_mode = res.get('speed_mode', 'fixed')
@@ -655,11 +1052,46 @@ def run_turnback_page():
             si_check = crit_result['speed_info']
             if 'vbg_1g_kias' in si_check:
                 turn_speed = si_check['vbg_1g_kias']
+    elif speed_mode in ('vs_plus_10', 'vs_x_1p3'):
+        if crit_result and 'speed_info' in crit_result:
+            si_check = crit_result['speed_info']
+            if 'target_kias' in si_check:
+                turn_speed = si_check['target_kias']
+        if turn_speed == res['airspeed']:
+            from analysis.turnback_simulator import operational_turn_speeds
+            _ops = operational_turn_speeds(config, res['weight'], res['bank_angle'], 0, 0)
+            turn_speed = _ops['vs_plus_10_kias'] if speed_mode == 'vs_plus_10' else _ops['vs_x_1p3_kias']
 
     if turn_speed < vs_turn * 1.05:
         st.error(f"⚠️ Turn speed ({turn_speed:.0f} KIAS) is dangerously close to or below "
                  f"the stall speed in the turn ({vs_turn:.0f} KIAS at {res['bank_angle']}° bank). "
                  f"Reduce bank angle or increase airspeed.")
+
+    # ── Satellite map / forced-landing analysis ──
+    # Pull L/D max from envelope speed_info if present, else compute from aero
+    _ld_ratio = None
+    _vbg_kias_for_map = None
+    if crit_result and 'speed_info' in crit_result:
+        _si = crit_result['speed_info']
+        _ld_ratio = _si.get('ld_max')
+        _vbg_kias_for_map = _si.get('vbg_1g_kias')
+    if _ld_ratio is None or _vbg_kias_for_map is None:
+        _vbg_calc, _, _ld_calc = best_glide_kias(
+            config, res['weight'], 1.0, field_elev, isa_dev)
+        _ld_ratio = _ld_ratio if _ld_ratio is not None else _ld_calc
+        _vbg_kias_for_map = _vbg_kias_for_map if _vbg_kias_for_map is not None else _vbg_calc
+
+    from analysis.landing_map import render_landing_map_section
+    render_landing_map_section(
+        critical_alt_low_ft=min(critical_alt_left_safe, critical_alt_right_safe),
+        critical_alt_high_ft=max(critical_alt_left_safe, critical_alt_right_safe),
+        straight_ahead_max_alt_ft=res.get('straight_ahead_max_alt', 0.0) or 0.0,
+        ld_ratio=float(_ld_ratio or 10.0),
+        best_glide_kias=float(_vbg_kias_for_map or 70.0),
+        wind_speed_kt=float(res.get('wind_speed', 0) or 0),
+        wind_from_deg=float(res.get('wind_from_deg', 0) or 0),
+        liftoff_distance_ft=float(res.get('liftoff_distance', 0) or 0),
+    )
 
     # ── 3D Plot ──
     st.subheader("3D Heart-Shaped Envelope")
@@ -1342,19 +1774,43 @@ def _show_theory_section():
     This shows why steep banks are so penalizing: lift coefficient squares in the 
     induced drag term, causing quadratic growth in drag as bank angle increases.
     
-    ### 4. Best-Glide Speed
+    ### 4. Best-Glide Speed (max L/D)
     
-    At maximum L/D (minimum sink rate):
+    At maximum L/D — the speed that gives the *farthest distance per foot
+    of altitude lost*:
     
-    **CL* = √(CDo / k)**
+    **CL\\* = √(CDo / k)**
     
-    **Vbg,TAS = √(2 · nz · W / (ρ · S · CL*))**
+    **Vbg,TAS = √(2 · nz · W / (ρ · S · CL\\*))**
     
     In KIAS:
     
     **Vbg,KIAS = Vbg,TAS · √σ**
     
     where σ is the air density ratio.
+    
+    > ⚠️ **Note:** Best L/D speed (max range glide) is **not** the same as
+    > minimum-sink-rate speed.  Minimum sink occurs at a *lower* CL than
+    > best L/D (specifically CL = √(3·CDo/k) for a parabolic polar).
+    > Min-sink keeps you airborne longer but covers less ground; best L/D
+    > covers more ground but at a higher sink rate.  For a turnback you
+    > want the speed that maximizes the **height available at a given
+    > horizontal distance** — i.e. best L/D, not min sink.
+    
+    ### 4b. Operational Turn-Speed Targets
+    
+    Best L/D in a steep banked turn is *very close to the turning stall*.
+    For everyday flying, the recommended targets (per Charlie Precourt /
+    EAA McSpadden Project) are:
+    
+    **Vs(φ) = Vs(1g) · √nz   = Vs(1g) · √(1 / cos φ)**
+    
+    Then either:
+    - **Vs(φ) + 10 KIAS**, or
+    - **1.3 × Vs(φ)**
+    
+    These give a safe stall margin while still achieving close-to-optimal
+    altitude loss in the turn.
     
     ### 5. Turn Radius & Rate
     
