@@ -326,6 +326,21 @@ AIRCRAFT_CONFIG = {
                             0.008, 0.015, 0.025, 0.000, 0.04, 0.04, 1680.0, 2400.0, 2558.0, 2550.0,
                             318.0, 8.0, 45.0, 0.30, 130.0, 1.55, 1.90, 2.30, 0.20, 80.0, 300, 0.25, 100.0),
 
+    # Cessna 150 — Continental O-200 (100 hp), fixed tricycle gear, 2-seat trainer.
+    #   Classic EAA-audience trainer.  S=160, b=33.4.  Vs(clean)~48 KIAS @ MTOW 1600 lb.
+    #   40° flap setting available (high drag) → larger dcdo_flap3.  100 hp scaled
+    #   thrust_mult = (100/180)*0.38 ~= 0.21.
+    ('C150', 'Flatwing'): (160.0, 33.4, 0.75, 0.0, 0, 0.45, 1, 0.21, 14000.0, 0.2, 4.8, 0.033,
+                           0.008, 0.015, 0.030, 0.000, 0.04, 0.04, 1100.0, 1600.0, 1600.0, 1600.0,
+                           156.0, 6.0, 30.0, 0.30, 109.0, 1.55, 1.90, 2.30, 0.18, 70.0, 200, 0.18, 75.0),
+
+    # Cessna 152 — Lycoming O-235 (110 hp), fixed tricycle gear, 2-seat trainer.
+    #   Successor to C150.  S=160, b=33.4.  Vs(clean)~48 KIAS @ MTOW 1670 lb.
+    #   Most-flown trainer in US fleet history; obvious on EAA-audience aircraft list.
+    ('C152', 'Flatwing'): (160.0, 33.4, 0.75, 0.0, 0, 0.45, 1, 0.23, 14700.0, 0.2, 4.8, 0.032,
+                           0.008, 0.015, 0.025, 0.000, 0.04, 0.04, 1100.0, 1670.0, 1670.0, 1670.0,
+                           156.0, 6.0, 30.0, 0.30, 110.0, 1.55, 1.90, 2.30, 0.18, 70.0, 200, 0.18, 75.0),
+
     # Cessna 182T Skylane — Lycoming IO-540 (230 hp), fixed gear
     ('C182T', 'Flatwing'): (174.0, 36.0, 0.75, 0.0, 0, 0.45, 1, 0.47, 14000.0, 0.2, 4.8, 0.031,
                             0.008, 0.015, 0.025, 0.000, 0.04, 0.04, 1970.0, 2800.0, 3112.0, 3100.0,

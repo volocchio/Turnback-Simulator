@@ -46,6 +46,8 @@ from engine.flight_physics import atmos
 #   RV-12        Van's Aircraft RV-12iS published spec sheet            ~  500 ft
 #   RV-14A       Van's Aircraft RV-14A published spec sheet             ~  500 ft
 #   C172S        Cessna 172S Skyhawk POH (180 hp, MTOW 2,550 lb)        ~  960 ft
+#   C150         Cessna 150 Owner's Manual (100 hp, MTOW 1,600 lb)      ~  735 ft
+#   C152         Cessna 152 POH (110 hp, MTOW 1,670 lb)                 ~  725 ft
 #   C182T        Cessna 182T Skylane POH (MTOW 3,100 lb)                ~  795 ft
 #   C182RG       Cessna 182RG Skylane POH (MTOW 3,100 lb)               ~  820 ft
 #   SR22         Cirrus SR22 POH (MTOW 3,400 lb, normally aspirated)    ~ 1080 ft
@@ -70,6 +72,8 @@ POH_GROUND_ROLL_FT = {
     'RV-12':   500,
     'RV-14A':  500,
     'C172S':   960,
+    'C150':    735,
+    'C152':    725,
     'C182T':   795,
     'C182RG':  820,
     'SR22':   1080,
