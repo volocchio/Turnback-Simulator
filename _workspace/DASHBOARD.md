@@ -87,7 +87,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [x] Show altitude profile at departure-end threshold for the downwind landing case *(Sprint D1 F3)*
 - [x] Per-section explainer text on the card *(Sprint D1 F4)*
 - [x] Runway-remaining point: show AGL/MSL when airborne *(Sprint D1 F5; threshold rows show MSL)*
-- [x] Straight-ahead landing limit = stay within **airport boundary**, not just runway asphalt  *(F7 shipped 2026-05-08: explicit st.info banner above the satellite map; OSM polygon overlay deferred)*
+- [x] Straight-ahead landing limit = stay within **airport boundary**, not just runway asphalt  *(F7 shipped 2026-05-08: explicit st.info banner above the satellite map; F7-v2 shipped 2026-05-08: actual OSM aeroway=aerodrome polygon overlaid as green semi-transparent boundary, session-cached, fetch_airport_perimeter())*
 
 **G. Visualization**
 - [x] Two arcs on the runway map showing top + bottom of the dead zone *(Sprint D2 G1)*
