@@ -591,6 +591,18 @@ def render_landing_map_section(
     # ── Dead-zone band ──
     dead_low = max(0.0, straight_ahead_max_alt_ft)
     dead_high = max(critical_alt_low_ft, critical_alt_high_ft)
+    # Charlie #F7 — straight-ahead boundary is the *airport perimeter*, not
+    # just runway asphalt.  Make this explicit on the map page.
+    st.info(
+        "**Straight-ahead landing zone = the entire airport boundary, "
+        "not just the runway asphalt.**  Below the straight-ahead-max "
+        f"altitude ({int(round(straight_ahead_max_alt_ft)):,} ft AGL), aim for any "
+        "open area inside the airport fence — taxiway, infield grass, "
+        "ramp, even a parking lot — *anything but a turn back to the "
+        "departure runway*.  An overrun onto airport infield is survivable; "
+        "a stall-spin in the turnback is not.  *(Future: render the actual "
+        "OSM airport polygon as a green overlay.)*"
+    )
     if dead_high <= dead_low:
         st.success(
             "✅ **No dead zone with current parameters.** Straight-ahead "

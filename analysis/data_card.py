@@ -16,6 +16,7 @@ Usage from turnback_app.py:
 from __future__ import annotations
 from datetime import datetime
 import html as _html
+import math
 
 
 _FLAP_LABELS = {0: "Clean", 1: "Takeoff / 15°", 2: "Landing / Full"}
@@ -387,6 +388,15 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     {warning_html}
 
     {_render_phase_summary(phase_summary, e)}
+
+    <h2>Training Brief — what these numbers mean</h2>
+    <div style='font-size: 10pt; line-height: 1.45;'>
+      <p><strong>Critical altitude</strong> is the lowest AGL at which the airplane can complete the turnback and reach the runway.  Below this, the turnback fails — the airplane runs out of altitude before the runway is in reach.  The LEFT/RIGHT split exists because crosswind drift, slope, and obstacles make the two directions asymmetric.  <strong>Always pick the lower of the two.</strong></p>
+      <p><strong>The 180° figure</strong> is half-mythology in the cockpit.  In reality the turn must overshoot the runway centerline (typically 200–270°) so the airplane is aligned on final, not perpendicular.  The "Sequence of Events" table above shows the actual heading change.</p>
+      <p><strong>Safety margin × Calculated</strong> = recommended go/no-go.  The calculated number is the bare aerodynamic minimum; the recommended number ({_fmt_int(crit_recommend, ' ft AGL')}) is what you brief.  Below the recommended altitude on takeoff, plan to land straight ahead within the airport boundary.</p>
+      <p><strong>Reaction time</strong> is the killer.  Three seconds doubles or triples the dead-zone altitude band.  Brief it on every takeoff: "engine quits below {_fmt_int(crit_recommend, ' ft AGL')} → straight ahead, no negotiation."</p>
+      <p><strong>Bank angle</strong> trades stall margin for turn radius.  At {_fmt_int(bank, '°')} bank, stall speed is {(_fmt_dec(((1.0 / max(0.05, math.cos(math.radians(bank))))**0.5 - 1.0) * 100.0, 0, '%')) if bank > 0 else '0%'} higher than wings-level.  Steeper than 45° is rarely worth it: the radius gain is small but the stall margin shrinks fast.</p>
+    </div>
 
     <h2>Practice Drill</h2>
     <ol style='font-size: 10pt; line-height: 1.4;'>

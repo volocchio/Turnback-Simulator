@@ -13,11 +13,17 @@
 | Takeoff Data Card | Bank-angle education | PDF export polish |
 | EAA Board presentation (Apr 29) | Reaction-time defaults | |
 
-**Critical fix since we last spoke:** descent-gradient equation was wrong (had `sin γ = −D/(n_z·W)`, correct is `sin γ = −D/W`). Sink rate was being underestimated **41% at 45° bank, 100% at 60°**. Pilots would have planned with rosier numbers than reality. Now correct everywhere — main descent loop, forward-slip, orbit estimate, straight-ahead.
+
 
 ---
 
 ## Four decisions I need from you
+
+> **Decisions logged 2026-05-08 — Nick → me:**
+> 1. Default safety margin = **1.25× (Aggressive)** — already the default; no change
+> 2. Bank-angle panel = **front-and-center** — already inline (Vs(φ), nz, Vs+10, 1.3·Vs); no change
+> 3. Reaction-time default = **5 sec realistic** — changed from 3 → 5 in the slider, help text updated
+> 4. Flap strategy = **just give them the answer** — already the optimizer's behavior; no change
 
 ### 1. Default safety margin
 Rogers' altitude-loss-in-the-turn isn't in any POH. We multiply the calculated turnback altitude by a margin and surface it as **"Calculated 800 ft / Recommended ___ ft."**

@@ -70,7 +70,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [ ] Altitude-step help bubble
 - [ ] Prop-drag help bubble: feathered/stopped/windmilling logic. Default to user's choice and show 3 comparison rows
 - [ ] Runway-model help bubble: glide angle 5/6/7°, no-flap stretch, no flare margin, hammer "preserve flaps for flare, kill higher sink"
-- [ ] Safety-margin slider repositioned right after climb-out speed
+- [x] Safety-margin slider repositioned right after climb-out speed  *(C2 shipped 2026-05-08)*
 
 **D. Wind / atmosphere inputs**
 - [ ] Winds-aloft: add direction column at 0/1000/2000/3000 (currently speed only)
@@ -87,7 +87,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [ ] Show altitude profile at departure-end threshold for the downwind landing case
 - [ ] Per-section explainer text on the card ("180° section is for X")
 - [ ] Runway-remaining point: show AGL/MSL when airborne — "how will the pilot know?"
-- [ ] Straight-ahead landing limit = stay within **airport boundary**, not just runway asphalt
+- [x] Straight-ahead landing limit = stay within **airport boundary**, not just runway asphalt  *(F7 shipped 2026-05-08: explicit st.info banner above the satellite map; OSM polygon overlay deferred)*
 
 **G. Visualization**
 - [ ] Two arcs on the runway map showing top + bottom of the dead zone (instead of top-down only)
@@ -97,8 +97,8 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [ ] OSM legend: color swatches next to good/caution/avoid
 
 **H. Curriculum / framing**
-- [ ] Turn this into a training curriculum: what it means for a CFI day-to-day, and for working pilots
-- [ ] Add training explainers in output ("180° just means…")
+- [x] Turn this into a training curriculum: what it means for a CFI day-to-day, and for working pilots  *(H1 shipped 2026-05-08: see `eaa-mcsppadden-project/TRAINING-CURRICULUM.md` — 4-session lesson plan, 3 personas, 4 numbers every brief, CFI takeaways)*
+- [x] Add training explainers in output ("180° just means…")  *(H2 shipped 2026-05-08: new "Training Brief" section on the data card explaining critical alt, the 180° myth, safety-margin reasoning, reaction time, bank trade)*
 
 ## 6. Architecture snapshot
 | Layer | File | Notes |
@@ -159,3 +159,5 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 | 2026-05-08 | **Sprint D2 shipped (visualization)** → G1: dead-zone glide-reach arcs (red = sa-max edge, yellow = turnback critical edge) overlaid on the 2D Plan View, centered at the failure point along the climb-out (uses L/D and 5° climb gradient); G4: heart-shape ground tracks (LEFT/RIGHT turnback at critical alt + straight-ahead-max) overlaid on the satellite map via new `envelope_tracks` parameter on `build_satellite_map`, with (x,y)-ft → (lat,lon) conversion using runway heading and atan2(x,y) bearing offset. 67/67 tests still pass. |
 | 2026-05-08 | **Sprint A regression triage shipped** → A1: surface wind kt + direction inputs `step=5→1` (Charlie can now enter 8/12 kt, was the regression).  A2: crosswind sign convention audited end-to-end — plumbing correct, but `_recommended_turn_direction` rationale text was misleading (claimed back-leg headwind; back-leg crosswind is actually symmetric).  Rewrote rationale to reflect the real benefit (turn into the wind → tighter ground arc, upwind finish).  A3: confirmed already fixed in Sprint A via `runway_length_published`.  67/67 tests. |
 | 2026-05-08 | **Sprint C8 shipped (flap-retract logic)** → New sidebar input "Retract takeoff flaps at (ft AGL)" appears only when takeoff flaps > 0 (default 400 ft).  Data card gets a "Flap-retract altitude" row.  When the critical turnback altitude falls below the retract altitude, the card shows a "FLAPS STILL OUT" warning explaining the Turn-flap selection assumes the pilot is already clean and that real-world drag will be higher.  +3 tests → 70/70. |
+| 2026-05-08 | **Charlie's 4 decisions logged** → (1) safety margin = 1.25× default already, (2) bank-angle panel = front-and-center already inline, (3) reaction-time default 3→5 sec realistic (Charlie's call), (4) flap strategy = optimizer already gives the answer.  Updated `_workspace/charlie-call-2026-05-08.md` with decision log header. |
+| 2026-05-08 | **Sprint cleanup ship** → C2: safety-margin slider moved up to right after climb-out speed (was buried at bottom).  F7: explicit "airport boundary, not runway" `st.info` banner above the satellite map (OSM polygon deferred).  H1: new 7-section TRAINING-CURRICULUM.md (4-session CFI lesson plan, 3 personas, 4 numbers, rules of the brief).  H2: new "Training Brief" section on the data card (180° myth, bank trade, reaction is the killer, safety-margin reasoning).  70/70 tests. |

@@ -209,6 +209,24 @@ def run_turnback_page():
         f"Vs clean at {weight} lb = {vs_clean_est:.0f} KIAS"
     )
 
+    # Charlie #C2 — safety-margin slider repositioned right after climb-out
+    # speed (was at the bottom of the sidebar).  Pilots want to set the buffer
+    # before they start tuning anything else.
+    safety_margin_factor = st.sidebar.slider(
+        "Safety-margin factor",
+        min_value=1.00, max_value=2.50, value=1.25, step=0.05,
+        key="safety_margin_factor",
+        help=(
+            "Multiplier applied to the calculated minimum critical altitude to "
+            "produce the *recommended* go/no-go altitude shown on the data card.  "
+            "1.00 = the bare aerodynamic minimum (zero buffer for pilot skill, "
+            "wind variability, or aircraft performance scatter).  **1.25 = +25% — "
+            "Charlie's call (May 2026); reasonable starting point for a current "
+            "pilot in a familiar airplane.**  1.50–2.00 = larger buffer for "
+            "low-currency pilots, gusty winds, or high density-altitude operations."
+        ),
+    )
+
     # Wing geometry
     _ar = config.span ** 2 / config.wing_area
     st.sidebar.caption(
@@ -306,7 +324,7 @@ def run_turnback_page():
     # Reaction time
     reaction_time = st.sidebar.slider(
         "Reaction time (s)", min_value=0.0, max_value=10.0,
-        value=3.0, step=0.5,
+        value=5.0, step=0.5,
         help=(
             "Time from engine failure until the pilot lowers the nose and "
             "establishes glide attitude.  During this delay the airplane decelerates "
@@ -314,7 +332,8 @@ def run_turnback_page():
             "NTSB simulator work suggest 3–4 s for a startled, well-trained pilot "
             "and 5–7 s for a surprised one.  Charlie Precourt teaches that practiced "
             "pilots can hit 1–2 s but the unannounced average is much higher; this "
-            "slider lets you bracket your personal worst-case."
+            "slider lets you bracket your personal worst-case.  "
+            "**Default 5 s = realistic startle-response (Charlie's call, May 2026).**"
         ),
     )
 
@@ -861,24 +880,9 @@ def run_turnback_page():
         ),
     )
 
-    # Safety-margin factor (Charlie #C9) — kept in the input flow so it is
-    # visible BEFORE running the simulation and the chosen value is honoured
-    # by the data card on first render.
-    st.sidebar.markdown("---")
-    safety_margin_factor = st.sidebar.slider(
-        "Safety-margin factor",
-        min_value=1.00, max_value=2.50, value=1.25, step=0.05,
-        key="safety_margin_factor",
-        help=(
-            "Multiplier applied to the calculated minimum critical altitude to "
-            "produce the *recommended* go/no-go altitude shown on the data card.  "
-            "1.00 = the bare aerodynamic minimum (zero buffer for pilot skill, "
-            "wind variability, or aircraft performance scatter).  1.25 = +25% — a "
-            "reasonable starting point for a current pilot in a familiar airplane.  "
-            "1.50–2.00 = larger buffer for low-currency pilots, gusty winds, or "
-            "high density-altitude operations."
-        ),
-    )
+    # Safety-margin factor moved up under climb-out speed (Charlie #C2,
+    # May 2026).  This breadcrumb left in place so future readers don't
+    # look for it down here.
 
     # ── Run simulation ──
     col_env, col_opt = st.sidebar.columns(2)
