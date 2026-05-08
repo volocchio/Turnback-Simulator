@@ -97,7 +97,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [ ] OSM legend: color swatches next to good/caution/avoid
 
 **H. Curriculum / framing**
-- [x] Turn this into a training curriculum: what it means for a CFI day-to-day, and for working pilots  *(H1 shipped 2026-05-08: see `eaa-mcsppadden-project/TRAINING-CURRICULUM.md` — 4-session lesson plan, 3 personas, 4 numbers every brief, CFI takeaways)*
+- [x] Turn this into a training curriculum: what it means for a CFI day-to-day, and for working pilots  *(H1 shipped 2026-05-08: in-app expander "🎓 Training Curriculum (CFI / working pilot)" at the bottom of the page — 7 sections: why, 3 personas, 4 numbers, 4-session lesson plan, rules of the brief, what the tool does NOT do, CFI takeaways)*
 - [x] Add training explainers in output ("180° just means…")  *(H2 shipped 2026-05-08: new "Training Brief" section on the data card explaining critical alt, the 180° myth, safety-margin reasoning, reaction time, bank trade)*
 
 ## 6. Architecture snapshot
