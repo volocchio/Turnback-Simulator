@@ -299,6 +299,80 @@ def fetch_landing_candidates(
     return {'features': features, 'error': None}
 
 
+def fetch_airport_perimeter(
+    lat: float,
+    lon: float,
+    search_radius_m: float = 4000.0,
+    timeout_s: float = 15.0,
+) -> dict:
+    """Query Overpass for the OSM airport-perimeter polygon nearest ``(lat, lon)``.
+
+    Returns ``{'polygon': [(lat, lon), ...], 'name': str, 'error': str|None}``.
+    ``polygon`` is empty if no aerodrome way was found within the radius.
+
+    Strategy: pull every ``aeroway=aerodrome`` *way* (closed polygon) within
+    the search radius, then pick the one whose centroid is nearest the input
+    coordinate.  Ignores point nodes — we want the actual fenced boundary.
+    """
+    try:
+        import requests
+    except ImportError:
+        return {'polygon': [], 'name': '', 'error': 'requests not installed'}
+
+    r = max(500.0, min(search_radius_m, 10_000.0))
+    overpass_q = (
+        '[out:json][timeout:15];'
+        f'(way["aeroway"="aerodrome"](around:{r:.0f},{lat:.6f},{lon:.6f});'
+        f' relation["aeroway"="aerodrome"](around:{r:.0f},{lat:.6f},{lon:.6f}););'
+        'out tags geom 50;'
+    )
+
+    try:
+        resp = requests.post(
+            'https://overpass-api.de/api/interpreter',
+            data={'data': overpass_q},
+            timeout=timeout_s,
+            headers={'User-Agent': 'TurnbackSimulator/1.0 (airport-perimeter)'},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        return {'polygon': [], 'name': '', 'error': f'{type(exc).__name__}: {exc}'}
+
+    best = None
+    best_dist = float('inf')
+    for el in data.get('elements', []):
+        tags = el.get('tags', {}) or {}
+        if tags.get('aeroway') != 'aerodrome':
+            continue
+
+        # Collect candidate rings: ways have 'geometry'; relations have 'members'
+        rings = []
+        if el.get('type') == 'way' and el.get('geometry'):
+            rings.append([(p['lat'], p['lon']) for p in el['geometry']])
+        elif el.get('type') == 'relation':
+            for m in el.get('members', []):
+                if m.get('type') == 'way' and m.get('role') in ('outer', '') and m.get('geometry'):
+                    rings.append([(p['lat'], p['lon']) for p in m['geometry']])
+
+        for geom in rings:
+            if len(geom) < 4:
+                continue
+            # Centroid
+            clat = sum(p[0] for p in geom) / len(geom)
+            clon = sum(p[1] for p in geom) / len(geom)
+            # Cheap planar distance (good enough for "nearest" within a few km)
+            d = math.hypot((clat - lat) * 111_000, (clon - lon) * 111_000 * math.cos(math.radians(lat)))
+            if d < best_dist:
+                best_dist = d
+                best = (geom, tags.get('name', '') or tags.get('icao', '') or tags.get('iata', ''))
+
+    if best is None:
+        return {'polygon': [], 'name': '', 'error': None}
+    geom, name = best
+    return {'polygon': geom, 'name': name, 'error': None}
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Folium map builder
 # ──────────────────────────────────────────────────────────────────────
@@ -316,6 +390,7 @@ def build_satellite_map(
     wind_speed_kt: float = 0.0,
     candidates: Optional[list] = None,
     envelope_tracks: Optional[list] = None,
+    airport_perimeter: Optional[list] = None,
 ):
     """Build a folium map centered on the airport with glide-footprint overlays.
 
@@ -371,6 +446,42 @@ def build_satellite_map(
         overlay=False,
         control=True,
     ).add_to(fmap)
+
+    # Airport perimeter polygon (Charlie #F7-v2) — OSM aeroway=aerodrome.
+    # Drawn BEFORE the dead-zone circles so they overlay it visibly.
+    if airport_perimeter and len(airport_perimeter) >= 3:
+        folium.Polygon(
+            locations=airport_perimeter,
+            color='#22c55e',
+            weight=3,
+            opacity=0.9,
+            fill=True,
+            fill_color='#22c55e',
+            fill_opacity=0.18,
+            tooltip='Airport perimeter (OSM) — straight-ahead landing zone',
+            popup=('<b>Airport perimeter</b><br>'
+                   'Below straight-ahead-max altitude, anywhere inside this '
+                   'green boundary is survivable.  Source: OpenStreetMap '
+                   '(aeroway=aerodrome).'),
+        ).add_to(fmap)
+
+    # Airport perimeter polygon (Charlie #F7-v2) — OSM aeroway=aerodrome.
+    # Drawn BEFORE the airport marker / circles so they overlay it visibly.
+    if airport_perimeter and len(airport_perimeter) >= 3:
+        folium.Polygon(
+            locations=airport_perimeter,
+            color='#22c55e',
+            weight=3,
+            opacity=0.9,
+            fill=True,
+            fill_color='#22c55e',
+            fill_opacity=0.18,
+            tooltip='Airport perimeter (OSM) — straight-ahead landing zone',
+            popup=('<b>Airport perimeter</b><br>'
+                   'Below straight-ahead-max altitude, anywhere inside this '
+                   'green boundary is survivable.  Source: OpenStreetMap '
+                   '(aeroway=aerodrome).'),
+        ).add_to(fmap)
 
     # Airport marker
     folium.Marker(
@@ -575,6 +686,12 @@ def render_landing_map_section(
              "and built-up areas within glide range. Requires internet; "
              "may take a few seconds.",
     )
+    show_perimeter = st.checkbox(
+        "Show airport perimeter (OSM)", value=True,
+        help="Overlay the OpenStreetMap aerodrome boundary as a green polygon. "
+             "This is the actual fenced area inside which a straight-ahead "
+             "landing is survivable \u2014 *not* just the runway asphalt.",
+    )
 
     if not code:
         st.info("Enter an airport code to see the satellite map.")
@@ -600,8 +717,8 @@ def render_landing_map_section(
         "open area inside the airport fence — taxiway, infield grass, "
         "ramp, even a parking lot — *anything but a turn back to the "
         "departure runway*.  An overrun onto airport infield is survivable; "
-        "a stall-spin in the turnback is not.  *(Future: render the actual "
-        "OSM airport polygon as a green overlay.)*"
+        "a stall-spin in the turnback is not.  *(The green polygon on the "
+        "map below is the actual OSM airport perimeter.)*"
     )
     if dead_high <= dead_low:
         st.success(
@@ -787,6 +904,25 @@ def render_landing_map_section(
                 'tooltip': f"Straight-ahead max @ {sa_row['alt_agl']} ft AGL",
             })
 
+    # ── F7-v2: fetch OSM airport perimeter polygon (cached per session) ──
+    airport_perimeter = None
+    if show_perimeter:
+        cache_key = f"_perimeter_cache_{airport.icao or airport.iata or code}"
+        cached = st.session_state.get(cache_key)
+        if cached is not None:
+            airport_perimeter = cached or None
+        else:
+            with st.spinner("Fetching airport perimeter from OpenStreetMap…"):
+                peri = fetch_airport_perimeter(airport.lat, airport.lon)
+            if peri.get('error'):
+                st.caption(f"⚠ OSM perimeter unavailable: {peri['error']}")
+                st.session_state[cache_key] = []
+            else:
+                airport_perimeter = peri.get('polygon') or None
+                st.session_state[cache_key] = airport_perimeter or []
+                if not airport_perimeter:
+                    st.caption("ℹ No `aeroway=aerodrome` polygon in OSM near this airport.")
+
     fmap = build_satellite_map(
         airport=airport,
         runway_heading_deg=runway_heading,
@@ -800,6 +936,7 @@ def render_landing_map_section(
         wind_speed_kt=wind_speed_kt,
         candidates=candidates,
         envelope_tracks=envelope_tracks,
+        airport_perimeter=airport_perimeter,
     )
     st_folium(fmap, height=600, width=None, returned_objects=[])
 
