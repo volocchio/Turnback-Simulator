@@ -595,9 +595,9 @@ def run_turnback_page():
         "Leave Direction = 0 to keep a row speed-only.*"
     )
     default_wind_rows = pd.DataFrame([
-        {"Altitude AGL (ft)": 1000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
-        {"Altitude AGL (ft)": 2000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
-        {"Altitude AGL (ft)": 3000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
+        {"Alt (ft)": 1000, "Dir (°)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Kt": float(wind_speed)},
+        {"Alt (ft)": 2000, "Dir (°)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Kt": float(wind_speed)},
+        {"Alt (ft)": 3000, "Dir (°)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Kt": float(wind_speed)},
     ])
     wind_profile_df = st.sidebar.data_editor(
         default_wind_rows,
@@ -607,17 +607,24 @@ def run_turnback_page():
         # Height = header (~38) + per-row (~36) + padding for the +/- row.
         # Default Streamlit height (~150) chops 3 rows into a scrollbar.
         height=185,
+        use_container_width=True,
         column_config={
-            "Altitude AGL (ft)": st.column_config.NumberColumn(
-                min_value=0, max_value=20000, step=100, format="%d"
+            "Alt (ft)": st.column_config.NumberColumn(
+                min_value=0, max_value=20000, step=100, format="%d",
+                help="Altitude AGL in feet.",
+                width="small",
             ),
-            "Direction (°true)": st.column_config.NumberColumn(
+            "Dir (°)": st.column_config.NumberColumn(
                 min_value=0, max_value=360, step=10, format="%d",
-                help="Wind FROM direction in true degrees.  Logged for audit; "
-                     "not yet wired into engine.",
+                help="Wind FROM direction in true degrees.  Interpolated "
+                     "per-altitude with sin/cos to handle 0/360° wrap.  "
+                     "Leave 0 to keep a row speed-only.",
+                width="small",
             ),
-            "Speed (kt)": st.column_config.NumberColumn(
-                min_value=0, max_value=200, step=1, format="%d"
+            "Kt": st.column_config.NumberColumn(
+                min_value=0, max_value=200, step=1, format="%d",
+                help="Wind speed in knots.",
+                width="small",
             ),
         },
     )
@@ -629,9 +636,9 @@ def run_turnback_page():
     wind_dir_profile = []
     try:
         for _, row in wind_profile_df.iterrows():
-            a = row.get("Altitude AGL (ft)")
-            s = row.get("Speed (kt)")
-            d = row.get("Direction (°true)")
+            a = row.get("Alt (ft)")
+            s = row.get("Kt")
+            d = row.get("Dir (°)")
             if pd.notna(a) and pd.notna(s) and float(a) > 0:
                 wind_profile.append((float(a), float(s)))
                 if pd.notna(d) and float(d) > 0:
