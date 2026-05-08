@@ -151,3 +151,5 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 | 2026-04-29 | Presented to EAA Board |
 | 2026-05-08 | Dashboard stood up; entering Phase 2 (safety & education UX) |
 | 2026-05-08 | Charlie call: 20+ Phase 2 items captured (see "Charlie call backlog" above). Surface-wind regression flagged. |
+| 2026-05-08 | **Sprint A shipped** → A1/A3 (HW-XW transparency + DB runway length fallback), F1/F2/F6 (MSL bold + safety-factor bold + airport-boundary wording on card), G5 (OSM legend swatches), C5 (bigger help icons). 59/59 tests, live. |
+| 2026-05-08 | **Sprint B shipped** → C3/C4/C6/C7 (rich help on bank/reaction/alt-step/prop-drag), C1 (flap inputs moved up under aircraft block), C9 (safety-margin slider promoted into sidebar inputs), D1 (winds-aloft direction column, audit-only), D2 (OAT °C vs ISA-deviation toggle in manual weather). 59/59 tests. |

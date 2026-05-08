@@ -102,6 +102,30 @@ def run_turnback_page():
         max_value=int(mtow), value=int(mtow), step=50,
     )
 
+    # Flap setting — split into takeoff vs turn (Charlie #2 / moved up #C1).
+    # Takeoff flap drives the climb-out / liftoff-distance regime.
+    # Turn flap drives the post-failure aerodynamics.  These are usually
+    # different in real life: a pilot may depart with takeoff flaps deployed
+    # but retract them before initiating any turnback.
+    flap_options = {0: "Clean", 1: "Takeoff / 15°", 2: "Landing / Full"}
+    takeoff_flap_setting = st.sidebar.radio(
+        "Takeoff flap setting", list(flap_options.keys()),
+        format_func=lambda x: flap_options[x], index=0,
+        help="Flap position used during the takeoff ground-roll and initial climb. "
+             "Recorded for reference today; will drive computed liftoff distance "
+             "in a future update.  Real aircraft typically take off with a small "
+             "flap deflection (e.g. flaps 10) and retract before any turnback.",
+    )
+    flap_setting = st.sidebar.radio(
+        "Turn flap setting", list(flap_options.keys()),
+        format_func=lambda x: flap_options[x], index=0,
+        help="Flap position during the engine-out turn.  Most pilots are taught "
+             "to retract takeoff flaps before initiating the turnback because "
+             "the higher CLmax doesn't help — clean produces less drag and "
+             "preserves more energy.  With runway model ON, landing flaps are "
+             "auto-deployed on final + forward slip as needed.",
+    )
+
     # ── Stall speeds (user-configurable, back-compute Clmax) ──
     # Defaults from config Clmax at MTOW
     _vs_clean_default = math.sqrt(295.0 * config.MTOW / (config.wing_area * config.Clmax))
@@ -196,7 +220,18 @@ def run_turnback_page():
     )
 
     # Bank angle
-    bank_angle = st.sidebar.slider("Bank angle (°)", min_value=10, max_value=60, value=45, step=5)
+    bank_angle = st.sidebar.slider(
+        "Bank angle (°)", min_value=10, max_value=60, value=45, step=5,
+        help=(
+            "Bank angle held during the turnback.  In a level turn the wing must "
+            "produce load factor n_z = 1/cos(φ): 30°→1.15g, 45°→1.41g, 60°→2.00g.  "
+            "Stall speed scales by √n_z (so Vs at 60° is ~41% higher than wings level), "
+            "and induced drag grows as CL² — steeper banks complete the turn in less "
+            "distance but bleed energy faster and shrink the stall margin.  "
+            "45° is the textbook compromise; instructors often demonstrate 30°/45°/60° "
+            "to find the per-aircraft sweet spot."
+        ),
+    )
 
     # Always show the operational target speeds for the selected bank — even
     # if user picked a different speed_mode — so they see what Charlie's
@@ -249,33 +284,23 @@ def run_turnback_page():
                      "(landing configuration). 0 = use aerodynamic computation.",
             )
 
-    # Flap setting — split into takeoff vs turn (Charlie #2).
-    # Takeoff flap drives the climb-out / liftoff-distance regime.
-    # Turn flap drives the post-failure aerodynamics.  These are usually
-    # different in real life: a pilot may depart with takeoff flaps deployed
-    # but retract them before initiating any turnback.
-    flap_options = {0: "Clean", 1: "Takeoff / 15°", 2: "Landing / Full"}
-    takeoff_flap_setting = st.sidebar.radio(
-        "Takeoff flap setting", list(flap_options.keys()),
-        format_func=lambda x: flap_options[x], index=0,
-        help="Flap position used during the takeoff ground-roll and initial climb. "
-             "Recorded for reference today; will drive computed liftoff distance "
-             "in a future update.  Real aircraft typically take off with a small "
-             "flap deflection (e.g. flaps 10) and retract before any turnback.",
-    )
-    flap_setting = st.sidebar.radio(
-        "Turn flap setting", list(flap_options.keys()),
-        format_func=lambda x: flap_options[x], index=0,
-        help="Flap position during the engine-out turn.  Most pilots are taught "
-             "to retract takeoff flaps before initiating the turnback because "
-             "the higher CLmax doesn't help — clean produces less drag and "
-             "preserves more energy.  With runway model ON, landing flaps are "
-             "auto-deployed on final + forward slip as needed.",
-    )
+    # Flap setting block has moved up under "Aircraft & Configuration"
+    # (Charlie #C1) — this comment intentionally left as a breadcrumb.
 
     # Reaction time
-    reaction_time = st.sidebar.slider("Reaction time (s)", min_value=0.0, max_value=10.0,
-                                       value=3.0, step=0.5)
+    reaction_time = st.sidebar.slider(
+        "Reaction time (s)", min_value=0.0, max_value=10.0,
+        value=3.0, step=0.5,
+        help=(
+            "Time from engine failure until the pilot lowers the nose and "
+            "establishes glide attitude.  During this delay the airplane decelerates "
+            "and loses altitude with no recovery action.  FAA accident studies and "
+            "NTSB simulator work suggest 3–4 s for a startled, well-trained pilot "
+            "and 5–7 s for a surprised one.  Charlie Precourt teaches that practiced "
+            "pilots can hit 1–2 s but the unannounced average is much higher; this "
+            "slider lets you bracket your personal worst-case."
+        ),
+    )
 
     # ── Departure Airport (optional) ──
     st.sidebar.markdown("---")
@@ -420,12 +445,37 @@ def run_turnback_page():
             summary_bits.append(f"wind {wind_from_true:03d}/{wind_speed:02d}{gust} kt")
         st.sidebar.success(" · ".join(summary_bits))
     else:
-        # Manual weather inputs
-        isa_dev = st.sidebar.number_input(
-            "ISA deviation (°C)", min_value=-40, max_value=50,
-            value=0, step=1,
-            help="Difference between actual OAT and ISA temperature at field elevation.",
+        # Manual weather inputs (Charlie #D2: pilots think in OAT °C, not ISA dev)
+        from engine.metar_parser import isa_deviation_c
+        temp_input_mode = st.sidebar.radio(
+            "Temperature input",
+            ["OAT (°C)", "ISA deviation (°C)"],
+            index=0,
+            horizontal=True,
+            help=(
+                "OAT: enter the actual outside-air temperature you read on the "
+                "thermometer / METAR (typical pilot mental model).  ISA deviation: "
+                "enter the offset from standard atmosphere at field elevation "
+                "(useful when comparing performance charts).  Both are converted "
+                "to the same internal density-altitude correction."
+            ),
         )
+        if temp_input_mode == "OAT (°C)":
+            # Sensible default = ISA at field elevation (i.e. ISA dev 0)
+            _isa_t = 15.0 - 0.001981 * float(field_elev)
+            oat_c = st.sidebar.number_input(
+                "OAT (°C)", min_value=-50, max_value=55,
+                value=int(round(_isa_t)), step=1,
+                help="Outside-air temperature at field elevation.",
+            )
+            isa_dev = int(round(isa_deviation_c(float(oat_c), field_elev)))
+            st.sidebar.caption(f"→ ISA deviation = **{isa_dev:+d}°C**")
+        else:
+            isa_dev = st.sidebar.number_input(
+                "ISA deviation (°C)", min_value=-40, max_value=50,
+                value=0, step=1,
+                help="Difference between actual OAT and ISA temperature at field elevation.",
+            )
         if use_airport_db:
             altimeter_inhg = st.sidebar.number_input(
                 "Altimeter (inHg)", min_value=27.50, max_value=31.50,
@@ -497,15 +547,18 @@ def run_turnback_page():
                 f"→ {hw_label} · {xw_label}"
             )
     
-    # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4)
+    # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4 / #D1)
     st.sidebar.caption(
         "*Wind at altitude: get from ForeFlight winds-aloft tab.  "
-        "Add or remove rows as needed; surface (0 ft) is the wind above.*"
+        "Add or remove rows as needed; surface (0 ft) is the wind above.*  \n"
+        "*Direction column is informational today — the engine currently treats "
+        "wind direction at altitude as identical to the surface direction.  "
+        "Capture the ForeFlight value here so you can audit the assumption.*"
     )
     default_wind_rows = pd.DataFrame([
-        {"Altitude AGL (ft)": 1000, "Speed (kt)": float(wind_speed)},
-        {"Altitude AGL (ft)": 2000, "Speed (kt)": float(wind_speed)},
-        {"Altitude AGL (ft)": 3000, "Speed (kt)": float(wind_speed)},
+        {"Altitude AGL (ft)": 1000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
+        {"Altitude AGL (ft)": 2000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
+        {"Altitude AGL (ft)": 3000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
     ])
     wind_profile_df = st.sidebar.data_editor(
         default_wind_rows,
@@ -516,13 +569,19 @@ def run_turnback_page():
             "Altitude AGL (ft)": st.column_config.NumberColumn(
                 min_value=0, max_value=20000, step=100, format="%d"
             ),
+            "Direction (°true)": st.column_config.NumberColumn(
+                min_value=0, max_value=360, step=10, format="%d",
+                help="Wind FROM direction in true degrees.  Logged for audit; "
+                     "not yet wired into engine.",
+            ),
             "Speed (kt)": st.column_config.NumberColumn(
                 min_value=0, max_value=200, step=1, format="%d"
             ),
         },
     )
     # Build wind_profile list of (alt_ft, speed_kt) tuples for the engine,
-    # ignoring blank or zero-altitude rows.
+    # ignoring blank or zero-altitude rows.  Direction column is captured for
+    # display/audit only and is not yet consumed by the simulator.
     wind_profile = []
     try:
         for _, row in wind_profile_df.iterrows():
@@ -666,10 +725,25 @@ def run_turnback_page():
         list(prop_state_options.keys()),
         format_func=lambda x: prop_state_options[x],
         index=0,
-        help="Feathered: blades edge-on, negligible extra drag. "
-             "Windmilling: prop freewheeling in the airstream. "
-             "Fixed-pitch stopped: small fixed-pitch prop not spinning. "
-             "Stopped: blades flat to airflow (worst case).",
+        help=(
+            "How the propeller behaves once thrust is lost.  Drag matters: a "
+            "windmilling prop can cost ~150–250 ft of glide range per 1,000 ft "
+            "of altitude vs. feathered.\n\n"
+            "• **Feathered** (turboprop or feathering CS prop pulled into "
+            "feather): blades edge-on to the airflow, near-zero rotation, "
+            "minimum drag — adds ~ΔCDo +0.0005.\n\n"
+            "• **Windmilling**: prop freewheels, blades present a large flat "
+            "disc to the airflow.  Default for fixed-pitch and most CS props "
+            "if the pilot does nothing.  ΔCDo +0.0020.\n\n"
+            "• **Fixed-pitch stopped**: small fixed-pitch prop that stalled "
+            "the engine and quit rotating.  Slightly less drag than "
+            "windmilling.  ΔCDo +0.0015.\n\n"
+            "• **Stopped / unfeathered** (CS prop, oil pressure lost, blades "
+            "flat to flow): worst case.  ΔCDo +0.0040.\n\n"
+            "Pick the state that matches *your* aircraft and your post-failure "
+            "drill (e.g. CS-prop pilots should pull the blue lever to coarse "
+            "pitch even if they can't fully feather)."
+        ),
     )
 
     gear_down = True  # default for fixed-gear aircraft
@@ -684,10 +758,44 @@ def run_turnback_page():
         st.sidebar.caption("Fixed gear — gear drag included in base CDo")
 
     # Altitude step & max
-    alt_step = st.sidebar.select_slider("Altitude step (ft)", options=[50, 100, 200, 500], value=100)
+    alt_step = st.sidebar.select_slider(
+        "Altitude step (ft)", options=[50, 100, 200, 500], value=100,
+        help=(
+            "Vertical resolution of the heart-shaped envelope.  Smaller = finer "
+            "contour but slower simulation (each step runs a full LEFT and RIGHT "
+            "trajectory).  100 ft is a good default; drop to 50 ft for a polished "
+            "plot, raise to 200/500 ft for quick what-if sweeps."
+        ),
+    )
 
-    max_alt_input = st.sidebar.number_input("Max altitude to plot (ft AGL, 0=auto)",
-                                             min_value=0, max_value=5000, value=0, step=100)
+    max_alt_input = st.sidebar.number_input(
+        "Max altitude to plot (ft AGL, 0=auto)",
+        min_value=0, max_value=5000, value=0, step=100,
+        help=(
+            "Upper bound for the altitude sweep.  0 = auto-pick a value safely "
+            "above the critical altitude.  Set higher if you want to study how the "
+            "envelope grows once the turn is trivially completable."
+        ),
+    )
+
+    # Safety-margin factor (Charlie #C9) — kept in the input flow so it is
+    # visible BEFORE running the simulation and the chosen value is honoured
+    # by the data card on first render.
+    st.sidebar.markdown("---")
+    safety_margin_factor = st.sidebar.slider(
+        "Safety-margin factor",
+        min_value=1.00, max_value=2.50, value=1.25, step=0.05,
+        key="safety_margin_factor",
+        help=(
+            "Multiplier applied to the calculated minimum critical altitude to "
+            "produce the *recommended* go/no-go altitude shown on the data card.  "
+            "1.00 = the bare aerodynamic minimum (zero buffer for pilot skill, "
+            "wind variability, or aircraft performance scatter).  1.25 = +25% — a "
+            "reasonable starting point for a current pilot in a familiar airplane.  "
+            "1.50–2.00 = larger buffer for low-currency pilots, gusty winds, or "
+            "high density-altitude operations."
+        ),
+    )
 
     # ── Run simulation ──
     col_env, col_opt = st.sidebar.columns(2)
@@ -859,17 +967,9 @@ def run_turnback_page():
     critical_alt_right = res.get('critical_alt_right', critical_alt)
     envelope = res['envelope']
 
-    # Safety margin factor slider
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Safety Margin")
-    safety_margin_factor = st.sidebar.slider(
-        "Recommended altitude margin", 
-        min_value=1.0, max_value=2.5, value=1.25, step=0.05,
-        help="Apply safety margin to calculated turnback altitude to account for "
-             "pilot skill, aircraft performance variability, and wind effects. "
-             "1.0 = calculated minimum (no margin), 1.25 = 25% safety buffer, "
-             "1.5 = 50% safety buffer, etc."
-    )
+    # Safety-margin factor (Charlie #C9): now lives in the sidebar inputs
+    # section above, so this block just reads the live value.
+    safety_margin_factor = st.session_state.get("safety_margin_factor", 1.25)
     critical_alt_left_safe = critical_alt_left * safety_margin_factor
     critical_alt_right_safe = critical_alt_right * safety_margin_factor
 
