@@ -118,3 +118,38 @@ def test_card_no_dead_zone_when_overlap():
     res['straight_ahead_max_alt'] = 800  # > crit_min 700
     html = build_takeoff_data_card(res, _sample_crit())
     assert "NO DEAD ZONE" in html
+
+# --- Sprint D1 (F3/F4/F5): MSL alongside AGL, departure-end threshold, phase summary ---
+
+def test_card_renders_phase_summary():
+    crit = dict(_sample_crit())
+    crit['phase_summary'] = [
+        {'phase': 'reaction', 'dt_s': 3.0, 'dz_loss_ft': 30, 'heading_change_deg': 0,
+         'z_start_agl': 1000, 'z_end_agl': 970, 'explainer': 'Engine quits.'},
+        {'phase': 'turn', 'dt_s': 13.7, 'dz_loss_ft': 200, 'heading_change_deg': 180,
+         'z_start_agl': 970, 'z_end_agl': 770, 'explainer': 'Bank toward runway.'},
+    ]
+    html = build_takeoff_data_card(_sample_res(), crit)
+    assert "Sequence of Events" in html
+    assert "1. Reaction" in html
+    assert "2. Turn back" in html
+    assert "Engine quits" in html
+
+
+def test_card_renders_departure_threshold_msl():
+    crit = dict(_sample_crit())
+    crit['altitude_at_departure_threshold'] = 590
+    crit['altitude_at_takeoff_threshold'] = 120
+    html = build_takeoff_data_card(_sample_res(), crit)
+    # field_elev=5800, so MSL = 590+5800=6390, 120+5800=5920
+    assert "590 ft AGL" in html
+    assert "6,390 ft MSL" in html
+    assert "120 ft AGL" in html
+    assert "5,920 ft MSL" in html
+    assert "downwind landing" in html.lower()
+
+
+def test_card_threshold_alt_includes_msl():
+    # Existing 'altitude_at_runway' = 50 in _sample_crit; MSL = 5850
+    html = build_takeoff_data_card(_sample_res(), _sample_crit())
+    assert "5,850 ft MSL" in html

@@ -386,6 +386,95 @@ def _compute_turn_statistics(trajectory, failure_alt_agl):
     }
 
 
+# --- Per-phase summary (Charlie #F4) ----------------------------------------
+def _compute_phase_summary(trajectory, failure_alt_agl):
+    """Return ordered list of phase blocks for the data-card breakdown.
+
+    Each block: {phase, t_start_s, t_end_s, dt_s, z_start_agl, z_end_agl,
+                 dz_loss_ft, heading_change_deg, explainer}
+
+    The explainer is a short one-liner the pilot can read on the card.
+    Uses the same phase tags emitted by simulate_turnback ('reaction',
+    'turn', 'return', 'orbit').
+    """
+    if not trajectory:
+        return []
+
+    EXPLAINERS = {
+        'reaction': "Engine quits — wings level, pitch for glide, identify the failure. "
+                    "No turn yet; altitude is bleeding off in straight flight.",
+        'turn': "Coordinated bank toward the runway.  This is where most altitude "
+                "is lost — sink rate scales with 1/cos(bank).",
+        'return': "Wings rolled out on a track back to the runway.  Flaps may "
+                  "deploy here to bleed energy and slow the approach.",
+        'orbit': "Aircraft arrived high or off-line — extra ~360° to bleed "
+                 "energy before lining up on the runway in the takeoff direction.",
+    }
+
+    blocks = []
+    cur_phase = trajectory[0].get('phase', '?')
+    seg_start_idx = 0
+    seg_start_z = failure_alt_agl
+    seg_start_t = trajectory[0].get('time', 0.0)
+    seg_start_hdg = trajectory[0].get('heading_deg', 0.0)
+    cum_start = trajectory[0].get('cum_turn_deg', 0.0)
+
+    def _emit(end_idx, end_phase_label):
+        end_pt = trajectory[end_idx]
+        z_end = end_pt['z']
+        t_end = end_pt.get('time', 0.0)
+        cum_end = end_pt.get('cum_turn_deg', 0.0)
+        blocks.append({
+            'phase': end_phase_label,
+            't_start_s': round(seg_start_t, 1),
+            't_end_s': round(t_end, 1),
+            'dt_s': round(t_end - seg_start_t, 1),
+            'z_start_agl': round(seg_start_z, 0),
+            'z_end_agl': round(z_end, 0),
+            'dz_loss_ft': round(seg_start_z - z_end, 0),
+            'heading_change_deg': round(cum_end - cum_start, 0),
+            'explainer': EXPLAINERS.get(end_phase_label, ""),
+        })
+
+    for i in range(1, len(trajectory)):
+        ph = trajectory[i].get('phase', '?')
+        if ph != cur_phase:
+            _emit(i - 1, cur_phase)
+            cur_phase = ph
+            seg_start_z = trajectory[i - 1]['z']
+            seg_start_t = trajectory[i - 1].get('time', 0.0)
+            cum_start = trajectory[i - 1].get('cum_turn_deg', 0.0)
+    # Final segment
+    _emit(len(trajectory) - 1, cur_phase)
+    return blocks
+
+
+# --- Departure-end-threshold altitude (Charlie #F3) -------------------------
+def _altitude_at_y(trajectory, target_y):
+    """Find the altitude (ft AGL) when the trajectory first crosses y=target_y
+    AFTER the maneuver has begun a turn (cum_turn_deg > 90°).
+
+    Returns None if no such crossing exists.  Linear-interpolates between
+    integration steps for accuracy.
+    """
+    if not trajectory or len(trajectory) < 2:
+        return None
+    prev = trajectory[0]
+    for pt in trajectory[1:]:
+        # Only look after the aircraft has started turning back
+        if pt.get('cum_turn_deg', 0.0) < 90.0:
+            prev = pt
+            continue
+        py = prev['y']
+        cy = pt['y']
+        if (py - target_y) * (cy - target_y) <= 0 and py != cy:
+            frac = (target_y - py) / (cy - py)
+            return prev['z'] + frac * (pt['z'] - prev['z'])
+        prev = pt
+    return None
+
+
+
 
 def simulate_turnback(
     config,
@@ -1103,10 +1192,28 @@ def simulate_turnback(
     # altitude per half-turn at altitude" and pick a safety factor.
     turn_stats = _compute_turn_statistics(trajectory, failure_alt_agl)
 
+    # ── Per-phase summary (Charlie #F4) ──
+    phase_summary = _compute_phase_summary(trajectory, failure_alt_agl)
+
+    # ── Departure-end-threshold altitude (Charlie #F3) ──
+    # When the pilot lands DOWNWIND on the original departure direction,
+    # the trajectory crosses the FAR end of the runway (y = intersection_offset_ft + runway_length).
+    # When landing reverse, the trajectory crosses the takeoff end (y = intersection_offset_ft).
+    # Surface both so the data card can report whichever applies, and the
+    # opposite end as supplemental information.
+    _far_end_y = intersection_offset_ft + (runway_length if runway_length else 0.0)
+    _near_end_y = intersection_offset_ft
+    altitude_at_departure_threshold = (
+        _altitude_at_y(trajectory, _far_end_y) if runway_length else None
+    )
+    altitude_at_takeoff_threshold = _altitude_at_y(trajectory, _near_end_y)
+
     return {
         'trajectory': trajectory,
         'success': success,
         'altitude_at_runway': altitude_at_runway,
+        'altitude_at_departure_threshold': altitude_at_departure_threshold,
+        'altitude_at_takeoff_threshold': altitude_at_takeoff_threshold,
         'stalled': stalled,
         'stall_time': stall_time,
         'turn_radius_ft': turn_radius_ft,
@@ -1121,6 +1228,7 @@ def simulate_turnback(
         'total_turn_deg': turn_stats['total_turn_deg'],
         'altitude_loss_per_180': turn_stats['altitude_loss_per_180'],
         'altitude_at_180_increments': turn_stats['altitude_at_180_increments'],
+        'phase_summary': phase_summary,
     }
 
 

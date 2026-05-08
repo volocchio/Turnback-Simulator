@@ -39,6 +39,52 @@ def _fmt_dec(v, places=1, suffix=""):
         return "—"
 
 
+# Charlie #F4 — per-phase explainer rendering for the data card.
+_PHASE_TITLES = {
+    'reaction': "1. Reaction",
+    'turn': "2. Turn back",
+    'return': "3. Return / approach",
+    'orbit': "4. Orbit (energy bleed)",
+}
+
+
+def _render_phase_summary(phase_summary, e) -> str:
+    """Render the per-phase breakdown table for the data card.
+
+    Each phase shows: title, dt, altitude lost, heading change, explainer.
+    Returns empty string when no phase data is available.
+    """
+    if not phase_summary:
+        return ""
+    rows = []
+    for blk in phase_summary:
+        title = _PHASE_TITLES.get(blk.get('phase', ''), blk.get('phase', '?').title())
+        dt = blk.get('dt_s', 0.0)
+        dz = blk.get('dz_loss_ft', 0.0)
+        dh = blk.get('heading_change_deg', 0.0)
+        z0 = blk.get('z_start_agl', 0.0)
+        z1 = blk.get('z_end_agl', 0.0)
+        explainer = blk.get('explainer', '') or ''
+        rows.append(
+            f"<tr>"
+            f"<td class='label' style='width:22%;'>{e(title)}</td>"
+            f"<td style='width:14%;'>{_fmt_dec(dt, 1, ' s')}</td>"
+            f"<td style='width:18%;'>−{_fmt_int(dz, ' ft')} <span class='muted'>({_fmt_int(z0, '')} → {_fmt_int(z1, ' ft AGL')})</span></td>"
+            f"<td style='width:14%;'>{_fmt_int(dh, '°')}</td>"
+            f"<td>{e(explainer)}</td>"
+            f"</tr>"
+        )
+    return (
+        "<h2>Sequence of Events (from critical-altitude trajectory)</h2>"
+        "<table>"
+        "<thead><tr>"
+        "<th>Phase</th><th>Duration</th><th>Altitude lost</th><th>Heading Δ</th><th>What's happening</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
 def _recommended_turn_direction(critical_alt_left: float,
                                 critical_alt_right: float,
                                 wind_from_deg: float,
@@ -148,6 +194,18 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     threshold_alt = crit_result.get('altitude_at_runway') if crit_result else None
     turn_radius = crit_result.get('turn_radius_ft') if crit_result else None
     landing_dir = crit_result.get('landing_direction', '') if crit_result else ''
+    # Charlie #F3 / #F5 — altitude profile at departure-end threshold for the
+    # downwind landing case, and MSL alongside AGL for runway crossings.
+    dep_thresh_alt = crit_result.get('altitude_at_departure_threshold') if crit_result else None
+    takeoff_thresh_alt = crit_result.get('altitude_at_takeoff_threshold') if crit_result else None
+    threshold_alt_msl = (threshold_alt + field_elev) if (threshold_alt is not None and field_elev is not None) else None
+    dep_thresh_alt_msl = (dep_thresh_alt + field_elev) if (dep_thresh_alt is not None and field_elev is not None) else None
+    takeoff_thresh_alt_msl = (takeoff_thresh_alt + field_elev) if (takeoff_thresh_alt is not None and field_elev is not None) else None
+    phase_summary = crit_result.get('phase_summary', []) if crit_result else []
+    _landing_dir_label = {
+        'reverse': "approach end (landing back into the takeoff direction)",
+        'original': "departure end (landing downwind in the takeoff direction)",
+    }.get(str(landing_dir).lower(), "—")
 
     # Wind profile rendering
     if wind_profile:
@@ -295,7 +353,9 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     <table>
       <tr><td class='label'>Critical altitude — turn LEFT</td><td class='value'>{_fmt_int(crit_left, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(crit_left_msl, ' ft MSL')}</strong>)</span></td></tr>
       <tr><td class='label'>Critical altitude — turn RIGHT</td><td class='value'>{_fmt_int(crit_right, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(crit_right_msl, ' ft MSL')}</strong>)</span></td></tr>
-      <tr><td class='label'>Threshold-crossing altitude (margin)</td><td class='value'>{_fmt_int(threshold_alt, ' ft AGL')}</td></tr>
+      <tr><td class='label'>Threshold-crossing altitude (margin)</td><td class='value'>{_fmt_int(threshold_alt, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(threshold_alt_msl, ' ft MSL')}</strong>) — {e(_landing_dir_label)}</span></td></tr>
+      <tr><td class='label'>Crossing the takeoff-end threshold</td><td class='value'>{_fmt_int(takeoff_thresh_alt, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(takeoff_thresh_alt_msl, ' ft MSL')}</strong>)</span></td></tr>
+      <tr><td class='label'>Crossing the departure-end threshold</td><td class='value'>{_fmt_int(dep_thresh_alt, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(dep_thresh_alt_msl, ' ft MSL')}</strong>) — relevant for downwind landing case</span></td></tr>
       <tr><td class='label'>Total degrees of turn required</td><td class='value'>{_fmt_int(total_turn_deg, '°')}</td></tr>
       <tr><td class='label'>Altitude lost per 180° of turn</td><td class='value'>{_fmt_int(loss_per_180, ' ft')}</td></tr>
       <tr><td class='label'>Turn radius (at chosen bank)</td><td class='value'>{_fmt_int(turn_radius, ' ft')}</td></tr>
@@ -303,6 +363,8 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     </table>
 
     {warning_html}
+
+    {_render_phase_summary(phase_summary, e)}
 
     <h2>Practice Drill</h2>
     <ol style='font-size: 10pt; line-height: 1.4;'>
