@@ -1318,6 +1318,9 @@ def run_turnback_page():
         liftoff_distance_ft=float(res.get('liftoff_distance', 0) or 0),
         default_airport_code=str(res.get('airport_ident') or ''),
         default_runway_heading=float(res.get('runway_heading_true') or 0),
+        envelope=envelope,
+        critical_alt=float(critical_alt or 0.0),
+        straight_ahead_max_alt=float(res.get('straight_ahead_max_alt', 0.0) or 0.0),
     )
 
     # ── 3D Plot ──
@@ -1336,8 +1339,19 @@ def run_turnback_page():
                              runway_length=res.get('runway_length', 0.0),
                              aim_point=res.get('aim_point', 0.0),
                              liftoff_distance=res.get('liftoff_distance', 0.0),
-                             show_success=show_success)
+                             show_success=show_success,
+                             straight_ahead_max_alt=res.get('straight_ahead_max_alt', 0.0) or 0.0,
+                             ld_ratio=float(_ld_ratio or 0.0),
+                             climb_gradient_deg=5.0)
     st.plotly_chart(fig_2d, use_container_width=True)
+    if (_ld_ratio or 0) > 0 and (res.get('straight_ahead_max_alt') or 0) > 0:
+        st.caption(
+            "**Dead-zone arcs (dotted):** red = low edge (top of straight-ahead band), "
+            "yellow = high edge (turnback critical alt).  Each circle is the "
+            f"still-air glide reach (radius = altitude × L/D{_ld_ratio:.1f}).  "
+            "Anywhere inside the yellow ring but outside the runway box "
+            "is your forced-landing search area at the dead-zone top."
+        )
 
     # ── Altitude profile ──
     st.subheader("Altitude vs Time — Critical Altitudes")
@@ -1662,8 +1676,17 @@ def _build_3d_plot(envelope, critical_alt, runway_length=0.0, aim_point=0.0, lif
     return fig
 
 
-def _build_2d_plan(envelope, critical_alt, runway_length=0.0, aim_point=0.0, liftoff_distance=0.0, show_success=True):
-    """Build the 2D plan view (top-down) showing ground tracks."""
+def _build_2d_plan(envelope, critical_alt, runway_length=0.0, aim_point=0.0,
+                   liftoff_distance=0.0, show_success=True,
+                   straight_ahead_max_alt=0.0, ld_ratio=0.0,
+                   climb_gradient_deg=5.0):
+    """Build the 2D plan view (top-down) showing ground tracks.
+
+    Charlie #G1: optionally overlay two glide-reach arcs centered on the
+    failure point at the LOW (= straight_ahead_max_alt) and HIGH (= critical_alt)
+    edges of the dead zone, so the pilot can SEE the band where neither
+    runway nor turnback is reachable.
+    """
     fig = go.Figure()
 
     # Draw climb-out line from liftoff to each altitude's engine failure point
@@ -1800,6 +1823,45 @@ def _build_2d_plan(envelope, critical_alt, runway_length=0.0, aim_point=0.0, lif
             textfont=dict(color='magenta', size=11),
             name=f'Touchdown Target ({aim_point:,.0f} ft)',
         ))
+
+    # ── G1: Dead-zone glide-reach arcs (Charlie #G1) ──
+    # Show the glide footprint at the LOW edge (sa_max alt) and HIGH edge
+    # (turnback critical alt) of the dead zone — so the pilot can see the
+    # band where they have no good option.
+    if ld_ratio and ld_ratio > 0:
+        import math as _math
+        try:
+            tan_grad = _math.tan(_math.radians(max(climb_gradient_deg, 0.5)))
+        except Exception:
+            tan_grad = _math.tan(_math.radians(5.0))
+        # Failure points (downrange ft from threshold) along centerline
+        for alt_ft, label, color in (
+            (max(straight_ahead_max_alt, 0.0), 'Dead-zone LOW', '#f87171'),
+            (max(critical_alt, 0.0), 'Dead-zone HIGH', '#fbbf24'),
+        ):
+            if alt_ft <= 0:
+                continue
+            fp_y = (liftoff_distance if liftoff_distance > 0 else 0.0) + alt_ft / tan_grad
+            r_ft = alt_ft * ld_ratio  # still-air glide reach (ft)
+            thetas = [i * _math.pi / 60.0 for i in range(121)]  # 0..2π
+            cx = [r_ft * _math.cos(t) for t in thetas]
+            cy = [fp_y + r_ft * _math.sin(t) for t in thetas]
+            fig.add_trace(go.Scatter(
+                x=cx, y=cy, mode='lines',
+                line=dict(color=color, width=2, dash='dot'),
+                name=f"{label} ({alt_ft:,.0f} ft AGL · {r_ft/6076.12:.2f} nm reach)",
+                hoverinfo='name',
+                opacity=0.85,
+            ))
+            # Mark the failure point itself
+            fig.add_trace(go.Scatter(
+                x=[0], y=[fp_y], mode='markers',
+                marker=dict(color=color, size=10, symbol='circle-open',
+                            line=dict(width=2)),
+                name=f"Failure pt @ {alt_ft:,.0f} ft",
+                showlegend=False,
+                hovertemplate=f"Failure point @ {alt_ft:,.0f} ft AGL<extra></extra>",
+            ))
 
     fig.update_layout(
         xaxis_title='Lateral Offset (ft)',

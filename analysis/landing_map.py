@@ -315,10 +315,16 @@ def build_satellite_map(
     wind_from_deg: float = 0.0,
     wind_speed_kt: float = 0.0,
     candidates: Optional[list] = None,
+    envelope_tracks: Optional[list] = None,
 ):
     """Build a folium map centered on the airport with glide-footprint overlays.
 
     Returns the folium Map object (caller renders via streamlit_folium).
+
+    ``envelope_tracks`` (Charlie #G4): optional list of dicts
+        {label, color, weight, latlons: [(lat, lon), ...], tooltip}
+    rendered as polylines on top of the satellite imagery.  Use to overlay
+    the actual heart-shaped turnback ground tracks at the critical altitude.
     """
     import folium
 
@@ -443,6 +449,24 @@ def build_satellite_map(
             tooltip=f"Wind from {wind_from_deg:.0f}° @ {wind_speed_kt:.0f} kt",
         ).add_to(fmap)
 
+    # Heart-shape envelope tracks (Charlie #G4)
+    if envelope_tracks:
+        env_group = folium.FeatureGroup(name='Turnback ground tracks', show=True)
+        for trk in envelope_tracks:
+            latlons = trk.get('latlons') or []
+            if len(latlons) < 2:
+                continue
+            folium.PolyLine(
+                latlons,
+                color=trk.get('color', '#facc15'),
+                weight=trk.get('weight', 3),
+                opacity=0.85,
+                dash_array=trk.get('dash_array'),
+                tooltip=trk.get('tooltip') or trk.get('label'),
+                popup=trk.get('label'),
+            ).add_to(env_group)
+        env_group.add_to(fmap)
+
     # Landing candidates from OSM
     if candidates:
         good = folium.FeatureGroup(name='Good landing areas', show=True)
@@ -500,11 +524,18 @@ def render_landing_map_section(
     liftoff_distance_ft: float = 0.0,
     default_airport_code: str = "KSEZ",
     default_runway_heading: float = 30.0,
+    envelope=None,
+    critical_alt: float = 0.0,
+    straight_ahead_max_alt: float = 0.0,
 ):
     """Render the satellite-map / forced-landing analysis section in the UI.
 
     Parameters mirror what the simulator already computes. Call this
     after the envelope / runway-zone analysis section.
+
+    ``envelope`` (Charlie #G4): if provided along with ``critical_alt``,
+    the critical-altitude turnback ground tracks (left & right) and the
+    straight-ahead-max ground track are overlaid on the satellite map.
     """
     import streamlit as st
 
@@ -668,6 +699,82 @@ def render_landing_map_section(
         )
         return
 
+    # ── G4: build heart-shape ground-track polylines from envelope ──
+    envelope_tracks = None
+    if envelope:
+        envelope_tracks = []
+        # Pick the envelope row at (or just above) critical_alt for each side
+        target_alt = max(critical_alt, max(critical_alt_low_ft, critical_alt_high_ft))
+        rwy_hdg = runway_heading
+
+        def _track_to_latlons(traj):
+            """Convert (x_ft, y_ft) trajectory to [(lat, lon), ...].
+            x = lateral (right of centerline +), y = downrange along runway hdg.
+            """
+            pts = []
+            for p in traj:
+                x_ft = p.get('x', 0.0)
+                y_ft = p.get('y', 0.0)
+                dist_ft = math.hypot(x_ft, y_ft)
+                if dist_ft < 1e-6:
+                    pts.append((airport.lat, airport.lon))
+                    continue
+                # Bearing offset from runway centerline: +x to the right
+                bearing = (rwy_hdg + math.degrees(math.atan2(x_ft, y_ft))) % 360.0
+                lat2, lon2 = offset_latlon(
+                    airport.lat, airport.lon, bearing, dist_ft / _FT_PER_M
+                )
+                pts.append((lat2, lon2))
+            return pts
+
+        # Find the row matching the critical altitude (or closest at-or-above)
+        crit_row = None
+        for row in envelope:
+            if row.get('alt_agl', 0) >= target_alt and (
+                row.get('left', {}).get('success') or row.get('right', {}).get('success')
+            ):
+                crit_row = row
+                break
+        if crit_row is None and envelope:
+            # Fallback: highest-alt successful row
+            for row in reversed(envelope):
+                if row.get('left', {}).get('success') or row.get('right', {}).get('success'):
+                    crit_row = row
+                    break
+
+        if crit_row:
+            for side, color, label in (
+                ('left',  '#facc15', 'Turnback LEFT (critical alt)'),
+                ('right', '#fb923c', 'Turnback RIGHT (critical alt)'),
+            ):
+                sub = crit_row.get(side) or {}
+                if sub.get('success') and sub.get('trajectory'):
+                    envelope_tracks.append({
+                        'label': f"{label} @ {crit_row['alt_agl']} ft AGL",
+                        'color': color,
+                        'weight': 4,
+                        'latlons': _track_to_latlons(sub['trajectory']),
+                        'tooltip': f"{label} from {crit_row['alt_agl']} ft AGL",
+                    })
+
+        # Straight-ahead-max track (engineless landing along centerline)
+        sa_row = None
+        if straight_ahead_max_alt > 0:
+            for row in envelope:
+                if (row.get('alt_agl', 0) >= straight_ahead_max_alt
+                        and row.get('straight_ahead', {}).get('success')):
+                    sa_row = row
+                    break
+        if sa_row and sa_row.get('straight_ahead', {}).get('trajectory'):
+            envelope_tracks.append({
+                'label': f"Straight-ahead max @ {sa_row['alt_agl']} ft AGL",
+                'color': '#22d3ee',
+                'weight': 3,
+                'dash_array': '6,6',
+                'latlons': _track_to_latlons(sa_row['straight_ahead']['trajectory']),
+                'tooltip': f"Straight-ahead max @ {sa_row['alt_agl']} ft AGL",
+            })
+
     fmap = build_satellite_map(
         airport=airport,
         runway_heading_deg=runway_heading,
@@ -680,6 +787,7 @@ def render_landing_map_section(
         wind_from_deg=wind_from_deg,
         wind_speed_kt=wind_speed_kt,
         candidates=candidates,
+        envelope_tracks=envelope_tracks,
     )
     st_folium(fmap, height=600, width=None, returned_objects=[])
 
