@@ -547,13 +547,13 @@ def run_turnback_page():
                 f"→ {hw_label} · {xw_label}"
             )
     
-    # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4 / #D1)
+    # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4 / #D1 / #E3)
     st.sidebar.caption(
         "*Wind at altitude: get from ForeFlight winds-aloft tab.  "
         "Add or remove rows as needed; surface (0 ft) is the wind above.*  \n"
-        "*Direction column is informational today — the engine currently treats "
-        "wind direction at altitude as identical to the surface direction.  "
-        "Capture the ForeFlight value here so you can audit the assumption.*"
+        "*Direction column is now wired through the engine (E3): wind direction "
+        "is interpolated per-altitude using sin/cos to handle the 0/360° wrap.  "
+        "Leave Direction = 0 to keep a row speed-only.*"
     )
     default_wind_rows = pd.DataFrame([
         {"Altitude AGL (ft)": 1000, "Direction (°true)": int(round(wind_from_true)) if wind_speed > 0 else 0, "Speed (kt)": float(wind_speed)},
@@ -580,17 +580,33 @@ def run_turnback_page():
         },
     )
     # Build wind_profile list of (alt_ft, speed_kt) tuples for the engine,
-    # ignoring blank or zero-altitude rows.  Direction column is captured for
-    # display/audit only and is not yet consumed by the simulator.
+    # ignoring blank or zero-altitude rows.  Direction column (E3) is now
+    # also consumed: per-altitude wind direction is converted to runway-
+    # relative degrees and passed in as wind_dir_profile.
     wind_profile = []
+    wind_dir_profile = []
     try:
         for _, row in wind_profile_df.iterrows():
             a = row.get("Altitude AGL (ft)")
             s = row.get("Speed (kt)")
+            d = row.get("Direction (°true)")
             if pd.notna(a) and pd.notna(s) and float(a) > 0:
                 wind_profile.append((float(a), float(s)))
+                if pd.notna(d) and float(d) > 0:
+                    # Convert true direction to runway-relative.  In airport-
+                    # DB mode runway_heading_true is the actual heading; in
+                    # legacy mode the user input is already runway-relative
+                    # (runway treated as heading 0).
+                    if use_airport_db:
+                        rel = (float(d) - runway_heading_true) % 360.0
+                    else:
+                        rel = float(d) % 360.0
+                    wind_dir_profile.append((float(a), rel))
     except Exception:
         wind_profile = []
+        wind_dir_profile = []
+    if not wind_dir_profile:
+        wind_dir_profile = None  # engine treats None as "constant surface dir"
 
     # Legacy wind_1000/2000/3000 kept zeroed — wind_profile takes precedence.
     wind_1000_kt = 0
@@ -684,6 +700,23 @@ def run_turnback_page():
                  "this much additional runway remains after the aircraft stops. "
                  "0 = aim based on rollout only (no extra buffer).",
         )
+
+        # Charlie #E1 — intersection departure.  Pilot lines up partway down
+        # the runway instead of at the threshold.  Reduces runway available
+        # for a straight-ahead landing and shifts the turnback geometry.
+        intersection_offset_ft = float(st.sidebar.number_input(
+            "Intersection departure offset (ft)",
+            min_value=0, max_value=int(max(0, runway_length - 500)), value=0, step=100,
+            help=(
+                "Distance from the runway threshold to the takeoff position.  "
+                "0 = full-length departure (default).  Set positive when "
+                "departing from a runway intersection — the aircraft starts "
+                "the takeoff roll partway down the runway, so the runway "
+                "REMAINING ahead for a straight-ahead landing shrinks by this "
+                "amount.  Common at busy fields: e.g. KSEZ has intersection "
+                "departures from taxiway A4."
+            ),
+        ))
         st.sidebar.caption(
             "**Aim point** = computed rollout + safety margin.  "
             "Forward slip used if needed to steepen descent.  "
@@ -695,6 +728,7 @@ def run_turnback_page():
         liftoff_distance = 0.0
         aim_point = 0.0
         touchdown_margin_ft = 0.0
+        intersection_offset_ft = 0.0
 
     # Always remember the *published* DB length so the data card can show it
     # even when the runway model is OFF (Charlie #A3).
@@ -747,6 +781,7 @@ def run_turnback_page():
     )
 
     gear_down = True  # default for fixed-gear aircraft
+    gear_retract_time_s = None  # E2: post-failure gear-up time (None = never)
     if config.dcdo_gear > 0:
         # Retractable gear — let user choose
         gear_down = st.sidebar.checkbox(
@@ -754,6 +789,34 @@ def run_turnback_page():
             help=f"Add landing-gear drag (ΔCDo = +{config.dcdo_gear:.4f}). "
                  "Un-check to model gear retracted after takeoff.",
         )
+        # Charlie #E2 — post-failure gear retraction.  Some retractable
+        # pilots are taught to bring the gear up after engine failure to
+        # reduce drag and extend glide.  Others teach to leave it where it
+        # is.  Let the user model both.
+        if gear_down:
+            retract_after_failure = st.sidebar.checkbox(
+                "Retract gear after failure",
+                value=False,
+                help=(
+                    "Some retractable-gear procedures call for raising the "
+                    "gear immediately after engine failure to reduce drag "
+                    "during the turnback (Mooney, Bonanza, C182RG).  "
+                    "When checked, the sim removes gear drag at the "
+                    "specified delay after failure."
+                ),
+            )
+            if retract_after_failure:
+                gear_retract_time_s = float(st.sidebar.number_input(
+                    "Gear-up delay after failure (s)",
+                    min_value=0.0, max_value=15.0, value=2.0, step=0.5,
+                    help=(
+                        "Seconds from engine failure until the gear is fully "
+                        "retracted (motor/hydraulic cycle time).  Typical "
+                        "5–8 s for piston singles, 2–4 s for high-performance "
+                        "retractables.  Drag drops by ΔCDo = "
+                        f"{config.dcdo_gear:.4f} at this time."
+                    ),
+                ))
     else:
         st.sidebar.caption("Fixed gear — gear drag included in base CDo")
 
@@ -814,11 +877,14 @@ def run_turnback_page():
                 wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                 wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
                 wind_profile=wind_profile,
+                wind_dir_profile=wind_dir_profile,
                 runway_length=runway_length, liftoff_distance=liftoff_distance,
                 aim_point=aim_point, flap_on_return=flap_on_return,
                 speed_mode=speed_mode,
                 prop_state=prop_state,
                 gear_down=gear_down,
+                gear_retract_time_s=gear_retract_time_s,
+                intersection_offset_ft=intersection_offset_ft,
                 vbg_clean_kias=vbg_clean_kias,
                 vbg_geardown_kias=vbg_geardown_kias,
                 vbg_landing_kias=vbg_landing_kias,
@@ -872,10 +938,13 @@ def run_turnback_page():
                 wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                 wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
                 wind_profile=wind_profile,
+                wind_dir_profile=wind_dir_profile,
                 runway_length=runway_length, liftoff_distance=liftoff_distance,
                 speed_mode=speed_mode,
                 prop_state=prop_state,
                 gear_down=gear_down,
+                gear_retract_time_s=gear_retract_time_s,
+                intersection_offset_ft=intersection_offset_ft,
                 vbg_clean_kias=vbg_clean_kias,
                 vbg_geardown_kias=vbg_geardown_kias,
                 vbg_landing_kias=vbg_landing_kias,
@@ -905,11 +974,14 @@ def run_turnback_page():
                     wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
                     wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
                     wind_profile=wind_profile,
+                    wind_dir_profile=wind_dir_profile,
                     runway_length=runway_length, liftoff_distance=liftoff_distance,
                     aim_point=aim_point, flap_on_return=best_flap_on_return,
                     speed_mode=speed_mode,
                     prop_state=prop_state,
                     gear_down=gear_down,
+                    gear_retract_time_s=gear_retract_time_s,
+                    intersection_offset_ft=intersection_offset_ft,
                     vbg_clean_kias=vbg_clean_kias,
                     vbg_geardown_kias=vbg_geardown_kias,
                     vbg_landing_kias=vbg_landing_kias,

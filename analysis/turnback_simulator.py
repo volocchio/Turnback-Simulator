@@ -112,6 +112,54 @@ def _interpolate_wind_profile(alt_agl, wind_sfc_kt, profile):
     return rows[-1][1]
 
 
+def _interpolate_wind_dir_profile(alt_agl, sfc_dir_deg, profile):
+    """Piecewise sin/cos interpolation of wind direction (deg) vs altitude AGL.
+
+    Charlie #E3: wind veers with altitude (Northern hemisphere typical: surface
+    wind backs ~20–30° from the gradient wind).  Linear interpolation in
+    degrees breaks at the 0/360 wrap, so we interpolate the unit-vector
+    components instead and convert back.
+
+    profile: iterable of (alt_agl_ft, direction_deg_relative_to_runway).
+             Surface direction is supplied separately as sfc_dir_deg.
+             Above the highest altitude the direction is held constant.
+
+    Returns direction in degrees (relative to runway) in [0, 360).
+    """
+    rows = [(0.0, float(sfc_dir_deg) % 360.0)]
+    for a, d in profile:
+        try:
+            a_f = float(a)
+            d_f = float(d) % 360.0
+        except (TypeError, ValueError):
+            continue
+        if a_f > 0.0:
+            rows.append((a_f, d_f))
+    rows.sort(key=lambda r: r[0])
+    dedup = {}
+    for a, d in rows:
+        dedup[a] = d
+    rows = sorted(dedup.items(), key=lambda r: r[0])
+
+    if alt_agl <= rows[0][0]:
+        return rows[0][1]
+    if alt_agl >= rows[-1][0]:
+        return rows[-1][1]
+    for i in range(1, len(rows)):
+        a_lo, d_lo = rows[i - 1]
+        a_hi, d_hi = rows[i]
+        if alt_agl <= a_hi:
+            frac = (alt_agl - a_lo) / (a_hi - a_lo) if a_hi > a_lo else 0.0
+            # Interpolate as unit vectors to avoid 0/360 wrap issues
+            r_lo = math.radians(d_lo)
+            r_hi = math.radians(d_hi)
+            sx = (1.0 - frac) * math.sin(r_lo) + frac * math.sin(r_hi)
+            cy = (1.0 - frac) * math.cos(r_lo) + frac * math.cos(r_hi)
+            ang = math.degrees(math.atan2(sx, cy)) % 360.0
+            return ang
+    return rows[-1][1]
+
+
 def best_glide_kias(config, weight, nz, field_elevation, isa_dev, cdo_override=None):
     """Compute best-glide KIAS (max L/D speed) for a given load factor.
 
@@ -356,6 +404,7 @@ def simulate_turnback(
     wind_2000_kt=0.0,
     wind_3000_kt=0.0,
     wind_profile=None,
+    wind_dir_profile=None,
     runway_length=0.0,
     liftoff_distance=0.0,
     aim_point=0.0,
@@ -363,6 +412,8 @@ def simulate_turnback(
     speed_mode='fixed',
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -521,7 +572,7 @@ def simulate_turnback(
 
     # --- Initial state ---
     x = 0.0                      # lateral offset from runway centerline (ft, + = right)
-    y = dist_from_threshold      # distance along runway heading from threshold (ft)
+    y = intersection_offset_ft + dist_from_threshold  # E1: intersection departure
     z = failure_alt_agl          # altitude AGL (ft)
     heading = 0.0                # radians, 0 = runway heading (+Y direction)
     t = 0.0
@@ -538,6 +589,7 @@ def simulate_turnback(
     max_orbits = max(20, int(failure_alt_agl / 100) + 1)
     landing_direction = 'reverse'  # 'reverse' = land opposite direction; 'original' = same as takeoff
     has_orbited_reverse = False  # True once we've tried a 360° orbit while still reverse
+    gear_retracted = False  # E2: tracks whether post-failure gear retraction has fired
 
     trajectory = []
 
@@ -597,9 +649,25 @@ def simulate_turnback(
             wind_speed_at_alt = _interpolate_wind_at_altitude(
                 z, wind_speed_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt
             )
+        # E3: optional per-altitude wind direction profile (rel. to runway).
+        # Falls back to the constant surface wind_from_rad if not supplied.
+        if wind_dir_profile:
+            _dir_deg_at_alt = _interpolate_wind_dir_profile(
+                z, wind_from_deg, wind_dir_profile
+            )
+            _wind_from_rad_now = math.radians(_dir_deg_at_alt)
+        else:
+            _wind_from_rad_now = wind_from_rad
+        # E2: gear-retraction event during the post-failure trajectory.
+        if (gear_retract_time_s is not None and gear_down
+                and t >= gear_retract_time_s and config.dcdo_gear > 0
+                and not gear_retracted):
+            cdo_clean -= config.dcdo_gear
+            cdo -= config.dcdo_gear
+            gear_retracted = True
         wind_fps = wind_speed_at_alt * 6076.12 / 3600.0
-        wind_x = -wind_fps * math.sin(wind_from_rad)   # lateral ft/s (+ = rightward)
-        wind_y = -wind_fps * math.cos(wind_from_rad)    # along-runway ft/s (+ = with takeoff direction)
+        wind_x = -wind_fps * math.sin(_wind_from_rad_now)   # lateral ft/s (+ = rightward)
+        wind_y = -wind_fps * math.cos(_wind_from_rad_now)    # along-runway ft/s (+ = with takeoff direction)
 
         # --- Phase logic (runs first so flap/nz state is current) ---
         # target_bank_deg is set per-phase; actual_bank_deg ramps toward it.
@@ -1065,10 +1133,13 @@ def simulate_straight_ahead(
     reaction_time, field_elevation=0.0, isa_dev=0.0,
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
+    wind_dir_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -1144,13 +1215,14 @@ def simulate_straight_ahead(
 
     # Initial state
     x = 0.0
-    y = dist_from_threshold
+    y = intersection_offset_ft + dist_from_threshold  # E1: intersection departure
     z = failure_alt_agl
     heading = 0.0  # straight ahead
     t = 0.0
     phase = 'reaction'
     stalled = False
     stall_time = None
+    gear_retracted = False  # E2: tracks post-failure gear-up event
 
     trajectory = []
     flaps_deployed = False
@@ -1158,6 +1230,22 @@ def simulate_straight_ahead(
     while z > 0 and t < 600.0:
         alt_msl = field_elevation + max(z, 0.0)
         _, _, sigma_now, delta_now, _, _ = atmos(alt_msl, isa_dev)
+
+        # E3: per-altitude wind direction (relative to runway).
+        if wind_dir_profile:
+            _dir_deg_at_alt = _interpolate_wind_dir_profile(
+                z, wind_from_deg, wind_dir_profile
+            )
+            _wind_from_rad_now = math.radians(_dir_deg_at_alt)
+            wind_x = -wind_fps * math.sin(_wind_from_rad_now)
+            wind_y = -wind_fps * math.cos(_wind_from_rad_now)
+        # E2: gear retraction event during the post-failure trajectory.
+        if (gear_retract_time_s is not None and gear_down
+                and t >= gear_retract_time_s and config.dcdo_gear > 0
+                and not gear_retracted):
+            cdo_clean -= config.dcdo_gear
+            cdo -= config.dcdo_gear
+            gear_retracted = True
 
         # Determine airspeed
         if phase == 'reaction':
@@ -1271,11 +1359,14 @@ def find_straight_ahead_max_altitude(
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     wind_profile=None,
+    wind_dir_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     alt_low=10.0, alt_high=3000.0, tolerance=5.0,
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -1295,10 +1386,13 @@ def find_straight_ahead_max_altitude(
         field_elevation=field_elevation, isa_dev=isa_dev,
         wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
         wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+        wind_dir_profile=wind_dir_profile,
         runway_length=runway_length, liftoff_distance=liftoff_distance,
         speed_mode=speed_mode,
         prop_state=prop_state,
         gear_down=gear_down,
+        gear_retract_time_s=gear_retract_time_s,
+        intersection_offset_ft=intersection_offset_ft,
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
@@ -1340,12 +1434,15 @@ def find_critical_altitude(
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     wind_profile=None,
+    wind_dir_profile=None,
     turn_direction='left',
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
     speed_mode='fixed',
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -1366,6 +1463,8 @@ def find_critical_altitude(
         speed_mode=speed_mode,
         prop_state=prop_state,
         gear_down=gear_down,
+        gear_retract_time_s=gear_retract_time_s,
+        intersection_offset_ft=intersection_offset_ft,
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
@@ -1374,6 +1473,7 @@ def find_critical_altitude(
         wind_2000_kt=wind_2000_kt,
         wind_3000_kt=wind_3000_kt,
         wind_profile=wind_profile,
+        wind_dir_profile=wind_dir_profile,
         runway_friction=runway_friction,
     )
 
@@ -1422,11 +1522,14 @@ def build_turnback_envelope(
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     wind_profile=None,
+    wind_dir_profile=None,
     runway_length=0.0, liftoff_distance=0.0, aim_point=0.0,
     flap_on_return=False,
     speed_mode='fixed',
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -1456,6 +1559,8 @@ def build_turnback_envelope(
         speed_mode=speed_mode,
         prop_state=prop_state,
         gear_down=gear_down,
+        gear_retract_time_s=gear_retract_time_s,
+        intersection_offset_ft=intersection_offset_ft,
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
@@ -1464,6 +1569,7 @@ def build_turnback_envelope(
         wind_2000_kt=wind_2000_kt,
         wind_3000_kt=wind_3000_kt,
         wind_profile=wind_profile,
+        wind_dir_profile=wind_dir_profile,
         runway_friction=runway_friction,
     )
 
@@ -1492,10 +1598,13 @@ def build_turnback_envelope(
             config, weight, airspeed_kias, reaction_time,
             field_elevation=field_elevation, isa_dev=isa_dev,
             wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
+            wind_dir_profile=wind_dir_profile,
             runway_length=runway_length, liftoff_distance=liftoff_distance,
             speed_mode=speed_mode,
             prop_state=prop_state,
             gear_down=gear_down,
+            gear_retract_time_s=gear_retract_time_s,
+            intersection_offset_ft=intersection_offset_ft,
             vbg_clean_kias=vbg_clean_kias,
             vbg_geardown_kias=vbg_geardown_kias,
             vbg_landing_kias=vbg_landing_kias,
@@ -1522,10 +1631,13 @@ def build_turnback_envelope(
         reaction_time=reaction_time,
         field_elevation=field_elevation, isa_dev=isa_dev,
         wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
+        wind_dir_profile=wind_dir_profile,
         runway_length=runway_length, liftoff_distance=liftoff_distance,
         speed_mode=speed_mode,
         prop_state=prop_state,
         gear_down=gear_down,
+        gear_retract_time_s=gear_retract_time_s,
+        intersection_offset_ft=intersection_offset_ft,
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
@@ -1580,12 +1692,15 @@ def optimize_turnback(
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     wind_profile=None,
+    wind_dir_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     bank_range=(10, 60), bank_step=2,
     alt_high=3000.0,
     speed_mode='fixed',
     prop_state='feathered',
     gear_down=True,
+    gear_retract_time_s=None,
+    intersection_offset_ft=0.0,
     vbg_clean_kias=0,
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
@@ -1674,12 +1789,15 @@ def optimize_turnback(
                             wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
                             wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
                             wind_profile=wind_profile,
+                            wind_dir_profile=wind_dir_profile,
                             turn_direction=direction,
                             runway_length=runway_length, liftoff_distance=liftoff_distance,
                             aim_point=aim_pt, flap_on_return=flap_on_return,
                             speed_mode=smode,
                             prop_state=prop_state,
                             gear_down=gear_down,
+                            gear_retract_time_s=gear_retract_time_s,
+                            intersection_offset_ft=intersection_offset_ft,
                             vbg_clean_kias=vbg_clean_kias,
                             vbg_geardown_kias=vbg_geardown_kias,
                             vbg_landing_kias=vbg_landing_kias,
