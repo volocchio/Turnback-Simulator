@@ -17,7 +17,7 @@ from analysis.turnback_simulator import (
     simulate_straight_ahead, find_straight_ahead_max_altitude,
     _select_vbg_override,
 )
-from analysis.data_card import build_takeoff_data_card
+from analysis.data_card import build_takeoff_data_card, build_takeoff_data_card_pdf
 
 # ── Page config for standalone mode ──
 try:
@@ -1254,18 +1254,29 @@ def run_turnback_page():
     )
     try:
         card_html = build_takeoff_data_card(res, crit_result, safety_margin_factor)
-        dc_cols = st.columns([1, 1, 2])
+        dc_cols = st.columns([1, 1, 1, 2])
         with dc_cols[0]:
+            card_pdf = build_takeoff_data_card_pdf(res, crit_result, safety_margin_factor)
+            if card_pdf:
+                st.download_button(
+                    "📄 Download PDF",
+                    data=card_pdf,
+                    file_name=f"TOLD_card_{res.get('airport_ident', 'card') or 'card'}_{res.get('runway_ident', '')}.pdf",
+                    mime="application/pdf",
+                    help="One-page printable PDF for the flight bag.",
+                )
+            else:
+                st.caption("PDF unavailable (xhtml2pdf missing)")
+        with dc_cols[1]:
             st.download_button(
                 "📥 Download HTML",
                 data=card_html.encode("utf-8"),
                 file_name=f"TOLD_card_{res.get('airport_ident', 'card') or 'card'}_{res.get('runway_ident', '')}.html",
                 mime="text/html",
-                help="Download the data card as a self-contained HTML file. "
-                     "Open in a browser and use Print → Save as PDF to keep "
-                     "in your flight bag.",
+                help="Self-contained HTML.  Open in a browser and use "
+                     "Print → Save as PDF for full styling fidelity.",
             )
-        with dc_cols[1]:
+        with dc_cols[2]:
             show_card = st.toggle(
                 "Preview card in app", value=False,
                 help="Render the printable card here in the page.",

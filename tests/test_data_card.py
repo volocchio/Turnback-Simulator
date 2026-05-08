@@ -174,3 +174,11 @@ def test_card_no_flap_warning_when_crit_above_retract():
     res['flap_retract_alt_ft'] = 300  # < crit_min 700
     html = build_takeoff_data_card(res, _sample_crit())
     assert "FLAPS STILL OUT" not in html
+
+def test_card_pdf_renders():
+    from analysis.data_card import build_takeoff_data_card_pdf
+    pdf = build_takeoff_data_card_pdf(_sample_res(), _sample_crit(), 1.25)
+    assert pdf is not None, "PDF builder returned None (xhtml2pdf missing or failed)"
+    assert isinstance(pdf, (bytes, bytearray))
+    assert pdf[:4] == b"%PDF", f"Not a PDF header: {pdf[:8]!r}"
+    assert len(pdf) > 1000, f"PDF suspiciously small: {len(pdf)} bytes"

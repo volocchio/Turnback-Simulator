@@ -414,3 +414,41 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     """
 
     return f"<!doctype html><html><head><meta charset='utf-8'><title>Takeoff Data Card</title>{css}</head><body>{body}</body></html>"
+
+
+def build_takeoff_data_card_pdf(res: dict, crit_result: dict | None,
+                                safety_margin_factor: float = 1.5) -> bytes | None:
+    """Render the takeoff data card to PDF bytes (US Letter, 0.5in margin).
+
+    Uses xhtml2pdf (pure-Python, reportlab-based — no system deps).  Returns
+    None if xhtml2pdf is not available or rendering fails, so callers can
+    gracefully fall back to the HTML download.
+    """
+    try:
+        from xhtml2pdf import pisa
+        import io
+    except Exception:
+        return None
+
+    html = build_takeoff_data_card(res, crit_result, safety_margin_factor)
+
+    # xhtml2pdf has a CSS subset — strip the heart/emoji-leaning unicode
+    # that pisa's default fonts can't render, and remove unsupported rules.
+    safe_html = (
+        html
+        .replace("⚠", "[!]")
+        .replace("📋", "")
+        .replace("✓", "OK")
+        .replace("→", "->")
+        .replace("·", "-")
+        .replace("×", "x")
+    )
+
+    buf = io.BytesIO()
+    try:
+        result = pisa.CreatePDF(src=safe_html, dest=buf, encoding="utf-8")
+    except Exception:
+        return None
+    if getattr(result, "err", 1):
+        return None
+    return buf.getvalue()
