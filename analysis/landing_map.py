@@ -681,7 +681,7 @@ def render_landing_map_section(
              "the aircraft is when the engine quits at each altitude.",
     )
     fetch_osm = cols[3].checkbox(
-        "Find landing candidates (OSM)", value=False,
+        "Find landing candidates (OSM)", value=True,
         help="Query OpenStreetMap for nearby fields, golf courses, water, "
              "and built-up areas within glide range. Requires internet; "
              "may take a few seconds.",

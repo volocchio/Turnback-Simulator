@@ -604,6 +604,9 @@ def run_turnback_page():
         num_rows="dynamic",
         hide_index=True,
         key="wind_profile_editor",
+        # Height = header (~38) + per-row (~36) + padding for the +/- row.
+        # Default Streamlit height (~150) chops 3 rows into a scrollbar.
+        height=185,
         column_config={
             "Altitude AGL (ft)": st.column_config.NumberColumn(
                 min_value=0, max_value=20000, step=100, format="%d"
