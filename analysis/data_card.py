@@ -162,6 +162,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     bank = res.get('bank_angle', 0)
     flap_takeoff = res.get('takeoff_flap_setting', 0)
     flap_turn = res.get('flap_setting', 0)
+    flap_retract_alt_ft = res.get('flap_retract_alt_ft', 0) or 0
     reaction = res.get('reaction_time', 0)
     speed_mode = res.get('speed_mode', 'fixed')
 
@@ -249,6 +250,21 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
                 "turnback coverage overlap.  Every failure altitude has an option.</p>"
             )
 
+    # Charlie #C8 — flap-still-deployed warning.  If the critical-turnback altitude
+    # is below the flap-retract altitude, the pilot is starting the turn with
+    # takeoff flaps still extended (regardless of what they selected for "Turn flap").
+    if (flap_takeoff > 0 and flap_retract_alt_ft > 0
+            and crit_min and crit_min < flap_retract_alt_ft):
+        warning_html += (
+            f"<p class='warn'><strong>⚠ FLAPS STILL OUT:</strong> Critical turnback "
+            f"altitude ({int(round(crit_min)):,} ft AGL) is BELOW your flap-retract "
+            f"altitude ({int(round(flap_retract_alt_ft)):,} ft AGL).  At engine "
+            f"failure you will still have <strong>{_FLAP_LABELS.get(flap_takeoff, str(flap_takeoff))}</strong> "
+            f"deployed — the \"Turn flap\" selection above assumes you've already "
+            f"cleaned up.  Real-world drag will be higher; expect more altitude loss "
+            f"than the table shows.</p>"
+        )
+
     css = """
     <style>
       @page { size: letter; margin: 0.5in; }
@@ -321,6 +337,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
         <tr><td class='label'>Wind components</td><td class='value'><strong>{wind_components_html}</strong></td></tr>
         <tr><td class='label'>Climb-out KIAS</td><td class='value'>{_fmt_int(airspeed, ' KIAS')}</td></tr>
         <tr><td class='label'>Takeoff flap</td><td class='value'>{e(_FLAP_LABELS.get(flap_takeoff, str(flap_takeoff)))}</td></tr>
+        <tr><td class='label'>Flap-retract altitude</td><td class='value'>{(_fmt_int(flap_retract_alt_ft, ' ft AGL') + " <span class='muted'>(climb-out: takeoff flaps until this altitude, then clean)</span>") if flap_takeoff > 0 and flap_retract_alt_ft > 0 else "<span class='muted'>n/a (clean takeoff)</span>"}</td></tr>
         <tr><td class='label'>Turn flap</td><td class='value'>{e(_FLAP_LABELS.get(flap_turn, str(flap_turn)))}</td></tr>
         <tr><td class='label'>Bank angle (turnback)</td><td class='value'>{_fmt_int(bank, '°')}</td></tr>
         <tr><td class='label'>Turnback speed mode</td><td class='value'>{e(speed_mode_label)}</td></tr>

@@ -153,3 +153,24 @@ def test_card_threshold_alt_includes_msl():
     # Existing 'altitude_at_runway' = 50 in _sample_crit; MSL = 5850
     html = build_takeoff_data_card(_sample_res(), _sample_crit())
     assert "5,850 ft MSL" in html
+
+def test_card_flap_retract_row_shown():
+    res = _sample_res()
+    res['flap_retract_alt_ft'] = 400
+    html = build_takeoff_data_card(res, _sample_crit())
+    assert "Flap-retract altitude" in html
+    assert "400 ft AGL" in html
+
+
+def test_card_flap_still_out_warning_when_crit_below_retract():
+    res = _sample_res()
+    res['flap_retract_alt_ft'] = 800  # > crit_min 700
+    html = build_takeoff_data_card(res, _sample_crit())
+    assert "FLAPS STILL OUT" in html
+
+
+def test_card_no_flap_warning_when_crit_above_retract():
+    res = _sample_res()
+    res['flap_retract_alt_ft'] = 300  # < crit_min 700
+    html = build_takeoff_data_card(res, _sample_crit())
+    assert "FLAPS STILL OUT" not in html

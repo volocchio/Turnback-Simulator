@@ -116,6 +116,22 @@ def run_turnback_page():
              "in a future update.  Real aircraft typically take off with a small "
              "flap deflection (e.g. flaps 10) and retract before any turnback.",
     )
+    # Charlie #C8 — interactive flap-retract logic on climb-out.
+    # If the pilot departed with takeoff flaps, ask at what AGL they retract.
+    # Below that altitude the failure happens with takeoff flaps still deployed
+    # (more drag, lower glide).  Above it, climb is clean.
+    if takeoff_flap_setting > 0:
+        flap_retract_alt_ft = st.sidebar.number_input(
+            "Retract takeoff flaps at (ft AGL)",
+            min_value=0, max_value=2000, value=400, step=50,
+            help="Altitude AGL at which takeoff flaps are retracted during a "
+                 "normal climb-out.  Typical: 200–500 ft AGL.  If engine failure "
+                 "occurs **below** this altitude, the turn flap setting below is "
+                 "ignored and takeoff flaps are still deployed when the turn "
+                 "begins.  Above it, you're already clean.",
+        )
+    else:
+        flap_retract_alt_ft = 0
     flap_setting = st.sidebar.radio(
         "Turn flap setting", list(flap_options.keys()),
         format_func=lambda x: flap_options[x], index=0,
@@ -908,12 +924,8 @@ def run_turnback_page():
             'bank_angle': bank_angle,
             'flap_setting': flap_setting,
             'takeoff_flap_setting': takeoff_flap_setting,
+            'flap_retract_alt_ft': flap_retract_alt_ft,
             'reaction_time': reaction_time,
-            'ac_key': ac_key,
-            'wind_speed': wind_speed,
-            'wind_from_deg': wind_from_deg,
-            'wind_from_true': wind_from_true,
-            'headwind_kt': hw,
             'crosswind_kt': xw,
             'runway_length': runway_length,
             'runway_length_published': runway_length_published,
@@ -1004,6 +1016,7 @@ def run_turnback_page():
                 'bank_angle': best['bank_angle'],
                 'flap_setting': best_flap,
                 'takeoff_flap_setting': takeoff_flap_setting,
+                'flap_retract_alt_ft': flap_retract_alt_ft,
                 'reaction_time': reaction_time,
                 'ac_key': ac_key,
                 'wind_speed': wind_speed,
