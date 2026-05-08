@@ -74,6 +74,8 @@ POH_GROUND_ROLL_FT = {
     'C172S':   960,
     'C150':    735,
     'C152':    725,
+    'PA-38':   820,   # Piper Tomahawk POH ground roll @ MTOW SL ISA
+    'DA20':    700,   # Diamond DA20-C1 Eclipse POH ground roll @ MTOW SL ISA
     'C182T':   795,
     'C182RG':  820,
     'SR22':   1080,

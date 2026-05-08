@@ -59,42 +59,42 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [x] **Data Card runway lengths showing 0 when "Enable runway model" is OFF** — already fixed in Sprint A via `runway_length_published` fallback (`turnback_app.py:735`, `data_card.py:164`); DB length is surfaced regardless of runway model toggle.
 
 **B. Aircraft library**
-- [ ] Add typical trainers: C150, C152, RV-12, plus inventory pass (Piper Tomahawk, Diamond DA20, etc.)
+- [x] Add typical trainers: C150, C152, RV-12 *(Sprint C-B1 / RV-12 already present)*, plus Piper Tomahawk (PA-38) + Diamond DA20-C1 *(B2 shipped 2026-05-08)*
 
 **C. Sidebar UX (climb-out / flap / bank / reaction zone)**
 - [x] Move flap inputs higher in the panel
 - [x] Climb-out speed: interactive flap-retract logic — "takeoff flaps → retract at XXX ft → clean climb"  *(C8 shipped 2026-05-08: new "Retract takeoff flaps at (ft AGL)" input appears when takeoff flaps > 0; data card adds Flap-retract row + warns "FLAPS STILL OUT" when critical-turnback altitude is below the retract altitude)*
-- [ ] Bank-angle slider help bubble (stall ×√n_z, sink-rate cost)
-- [ ] Reaction-time help bubble (3 sec = FAA assumption; 5–7 sec realistic)
-- [ ] Bigger help-bubble icons + larger help text (current ones are hard to see)
-- [ ] Altitude-step help bubble
-- [ ] Prop-drag help bubble: feathered/stopped/windmilling logic. Default to user's choice and show 3 comparison rows
-- [ ] Runway-model help bubble: glide angle 5/6/7°, no-flap stretch, no flare margin, hammer "preserve flaps for flare, kill higher sink"
+- [x] Bank-angle slider help bubble *(Sprint B)*
+- [x] Reaction-time help bubble — also bumped default 3→5 s per Charlie 2026-05-08 *(Sprint B + decisions sweep)*
+- [x] Bigger help-bubble icons + larger help text *(Sprint B)*
+- [x] Altitude-step help bubble *(Sprint B)*
+- [x] Prop-drag help bubble *(Sprint B)*
+- [x] Runway-model help bubble *(Sprint B)*
 - [x] Safety-margin slider repositioned right after climb-out speed  *(C2 shipped 2026-05-08)*
 
 **D. Wind / atmosphere inputs**
-- [ ] Winds-aloft: add direction column at 0/1000/2000/3000 (currently speed only)
-- [ ] Temperature input: user picks °C or ISA-deviation (default = °C / OAT)
+- [x] Winds-aloft: add direction column at 0/1000/2000/3000 *(Sprint B + C2 E3)*
+- [x] Temperature input: user picks °C or ISA-deviation *(Sprint B)*
 
 **E. Operations realism**
-- [ ] Intersection-departure mode (not recommended but sometimes ATC-directed) — let user pick takeoff start point along the runway
-- [ ] Gear-retract timing: when's the best time for gear back out? Show penalty for leaving it down
-- [ ] Heading-vs-track display toggle (compare runway-heading hold vs runway-track hold)
+- [x] Intersection-departure mode *(Sprint C2 E1)*
+- [x] Gear-retract timing *(Sprint C2 E2)*
+- [ ] Heading-vs-track display toggle (compare runway-heading hold vs runway-track hold)  *(deferred — needs sim-side air-mass frame)*
 
 **F. Card / output**
-- [ ] MSL altitude on the card, **bold** (pilot reads MSL on the altimeter)
-- [ ] Safety factor in **bold** on the card
-- [ ] Show altitude profile at departure-end threshold for the downwind landing case
-- [ ] Per-section explainer text on the card ("180° section is for X")
-- [ ] Runway-remaining point: show AGL/MSL when airborne — "how will the pilot know?"
+- [x] MSL altitude on the card, **bold** *(Sprint A)*
+- [x] Safety factor in **bold** on the card *(Sprint A)*
+- [x] Show altitude profile at departure-end threshold for the downwind landing case *(Sprint D1 F3)*
+- [x] Per-section explainer text on the card *(Sprint D1 F4)*
+- [x] Runway-remaining point: show AGL/MSL when airborne *(Sprint D1 F5; threshold rows show MSL)*
 - [x] Straight-ahead landing limit = stay within **airport boundary**, not just runway asphalt  *(F7 shipped 2026-05-08: explicit st.info banner above the satellite map; OSM polygon overlay deferred)*
 
 **G. Visualization**
-- [ ] Two arcs on the runway map showing top + bottom of the dead zone (instead of top-down only)
-- [ ] 3D view eyepoint: dead-zone, turnback path
-- [ ] Pilot-perspective flyby motion mode
-- [ ] Heart-shape envelope: training-only, move it to the map
-- [ ] OSM legend: color swatches next to good/caution/avoid
+- [x] Two arcs on the runway map showing top + bottom of the dead zone *(Sprint D2 G1)*
+- [ ] 3D view eyepoint: dead-zone, turnback path  *(deferred)*
+- [ ] Pilot-perspective flyby motion mode  *(deferred)*
+- [x] Heart-shape envelope: training-only, move it to the map *(Sprint D2 G4 — overlaid on satellite map)*
+- [x] OSM legend: color swatches next to good/caution/avoid *(Sprint A G5)*
 
 **H. Curriculum / framing**
 - [x] Turn this into a training curriculum: what it means for a CFI day-to-day, and for working pilots  *(H1 shipped 2026-05-08: in-app expander "🎓 Training Curriculum (CFI / working pilot)" at the bottom of the page — 7 sections: why, 3 personas, 4 numbers, 4-session lesson plan, rules of the brief, what the tool does NOT do, CFI takeaways)*

@@ -341,6 +341,22 @@ AIRCRAFT_CONFIG = {
                            0.008, 0.015, 0.025, 0.000, 0.04, 0.04, 1100.0, 1670.0, 1670.0, 1670.0,
                            156.0, 6.0, 30.0, 0.30, 110.0, 1.55, 1.90, 2.30, 0.18, 70.0, 200, 0.18, 75.0),
 
+    # Piper PA-38 Tomahawk — Lycoming O-235 (112 hp), fixed tricycle gear,
+    #   T-tail, 2-seat trainer.  S=125 ft², b=34 ft.  Vs(clean) ~ 49 KIAS,
+    #   MTOW 1670 lb.  Notorious for crisp stall / spin characteristics
+    #   compared to C150/C152 — a common impossible-turn scenario airframe.
+    ('PA-38', 'Flatwing'): (125.0, 34.0, 0.74, 0.0, 0, 0.45, 1, 0.23, 13000.0, 0.2, 4.7, 0.034,
+                            0.008, 0.016, 0.026, 0.000, 0.04, 0.04, 1128.0, 1670.0, 1670.0, 1670.0,
+                            132.0, 6.0, 28.0, 0.30, 112.0, 1.55, 1.90, 2.30, 0.18, 70.0, 200, 0.18, 75.0),
+
+    # Diamond DA20-C1 Eclipse — Continental IO-240-B (125 hp), fixed tricycle gear,
+    #   composite low-wing, 2-seat trainer/sport.  S=125 ft², b=35.7 ft (high AR).
+    #   Vs(clean) ~ 42 KIAS @ MTOW 1764 lb.  Higher AR + clean composite = better
+    #   glide than C152, distinct dead-zone shape worth showing pilots.
+    ('DA20', 'Flatwing'): (125.0, 35.7, 0.78, 0.0, 0, 0.45, 1, 0.26, 13100.0, 0.2, 5.0, 0.025,
+                           0.007, 0.014, 0.022, 0.000, 0.04, 0.04, 1190.0, 1764.0, 1764.0, 1764.0,
+                           144.0, 6.0, 30.0, 0.30, 118.0, 1.50, 1.85, 2.20, 0.18, 70.0, 220, 0.18, 80.0),
+
     # Cessna 182T Skylane — Lycoming IO-540 (230 hp), fixed gear
     ('C182T', 'Flatwing'): (174.0, 36.0, 0.75, 0.0, 0, 0.45, 1, 0.47, 14000.0, 0.2, 4.8, 0.031,
                             0.008, 0.015, 0.025, 0.000, 0.04, 0.04, 1970.0, 2800.0, 3112.0, 3100.0,
