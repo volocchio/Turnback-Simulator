@@ -482,16 +482,20 @@ def run_turnback_page():
                 value=29.92, step=0.01, format="%.2f",
                 help="Optional. Used for pressure-altitude logging only.",
             )
+        # Charlie #A1 — step=1 so pilots can enter 8 kt / 12 kt etc.  Step=5
+        # was forcing values to multiples of 5 (the regression Charlie flagged).
         wind_speed = st.sidebar.number_input(
             "Surface wind speed (kt)", min_value=0, max_value=60,
-            value=0, step=5,
+            value=0, step=1,
+            help="Type any integer 0–60 kt.  Use the +/- buttons for ±1 kt.",
         )
         if use_airport_db:
             wind_from_true = st.sidebar.number_input(
                 "Surface wind FROM (°true)", min_value=0, max_value=359,
-                value=int(round(runway_heading_true)) if runway_heading_true else 0, step=5,
-                help="Wind direction in true degrees (matches METAR). "
-                     "Headwind/crosswind components are computed from runway heading.",
+                value=int(round(runway_heading_true)) if runway_heading_true else 0, step=1,
+                help="Wind direction in true degrees (matches METAR).  "
+                     "Headwind/crosswind components are computed from runway heading.  "
+                     "Type any value 0–359°.",
             )
         else:
             wind_dir_options = {

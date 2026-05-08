@@ -109,18 +109,23 @@ def _recommended_turn_direction(critical_alt_left: float,
         if wind_speed_kt < 1.0:
             return ("LEFT", "Critical altitudes are equivalent (no wind tiebreaker); "
                             "default LEFT is conventional pattern direction.")
-        # wind_from_deg=90 → right crosswind → turning LEFT puts the headwind
-        # on the back-leg (because the aircraft will be flying back towards
-        # the original takeoff direction tail-on the wind).  Charlie's rule:
-        # turn into the wind.
+        # wind_from_deg=90 → wind FROM the right at takeoff.  Turning RIGHT
+        # rolls the aircraft INTO the wind during the turn (tightens ground
+        # arc, wind helps push the nose around) and finishes the 180° upwind
+        # of the runway centerline — i.e. blown back toward the field rather
+        # than away from it.  This is the "turn into the wind" pilot rule.
+        # (Note: on the back-leg itself the crosswind is symmetric; the
+        # benefit is in the *turn* and in the post-turn position.)
         if 1 <= wind_from_deg <= 179:
             return ("RIGHT", f"Critical altitudes are equivalent.  "
-                              f"Surface wind is from the right — turn RIGHT to put "
-                              f"the headwind on your turnback ground track.")
+                              f"Surface wind is from the right — turning RIGHT "
+                              f"rolls you INTO the wind, tightening the ground "
+                              f"arc and finishing the 180° upwind of the runway.")
         elif 181 <= wind_from_deg <= 359:
             return ("LEFT", f"Critical altitudes are equivalent.  "
-                             f"Surface wind is from the left — turn LEFT to put "
-                             f"the headwind on your turnback ground track.")
+                             f"Surface wind is from the left — turning LEFT "
+                             f"rolls you INTO the wind, tightening the ground "
+                             f"arc and finishing the 180° upwind of the runway.")
         else:
             return ("LEFT", "Critical altitudes are equivalent (pure headwind); "
                             "default LEFT is conventional pattern direction.")
