@@ -635,6 +635,28 @@ def render_landing_map_section(
                 f"Found **{len(candidates)}** features within glide range. "
                 f"Toggle layers via the control on the map."
             )
+            # Charlie #G5 — color swatches next to good/caution/avoid so the
+            # map's coloring is self-explanatory without hovering features.
+            st.markdown(
+                """
+                <div style='display:flex;gap:18px;flex-wrap:wrap;font-size:13px;
+                            margin:6px 0 10px 0;'>
+                  <span><span style='display:inline-block;width:14px;height:14px;
+                        background:#22c55e;border-radius:3px;vertical-align:middle;
+                        margin-right:6px;'></span><strong>GOOD</strong> — airports,
+                        farmland, meadow, golf course</span>
+                  <span><span style='display:inline-block;width:14px;height:14px;
+                        background:#f59e0b;border-radius:3px;vertical-align:middle;
+                        margin-right:6px;'></span><strong>CAUTION</strong> — major
+                        roads, parking lots (wires, traffic, light poles)</span>
+                  <span><span style='display:inline-block;width:14px;height:14px;
+                        background:#dc2626;border-radius:3px;vertical-align:middle;
+                        margin-right:6px;'></span><strong>AVOID</strong> — water,
+                        rivers, dense built-up</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     # ── Render the map ──
     try:

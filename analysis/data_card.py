@@ -115,11 +115,17 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     speed_mode = res.get('speed_mode', 'fixed')
 
     runway_length = res.get('runway_length', 0)
+    runway_length_published = res.get('runway_length_published', 0) or runway_length
     liftoff_distance = res.get('liftoff_distance', 0)
 
     crit_left = res.get('critical_alt_left', 0)
     crit_right = res.get('critical_alt_right', 0)
     sa_max = res.get('straight_ahead_max_alt', 0)
+
+    # Wind components (Charlie #A1) — always available now from app
+    headwind_kt = res.get('headwind_kt')
+    crosswind_kt = res.get('crosswind_kt')
+    wind_from_true = res.get('wind_from_true')
 
     # Derived recommended direction
     rec_dir, rec_rationale = _recommended_turn_direction(
@@ -129,6 +135,12 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     # Recommended turnback altitude with safety margin
     crit_min = min(c for c in (crit_left, crit_right) if c > 0) if max(crit_left, crit_right) > 0 else 0
     crit_recommend = crit_min * safety_margin_factor
+
+    # Charlie #F1 — pilots read MSL on the altimeter, so show MSL alongside AGL
+    crit_recommend_msl = crit_recommend + (field_elev or 0) if crit_recommend else 0
+    crit_min_msl = crit_min + (field_elev or 0) if crit_min else 0
+    crit_left_msl = crit_left + (field_elev or 0) if crit_left else 0
+    crit_right_msl = crit_right + (field_elev or 0) if crit_right else 0
 
     # Turn statistics from critical-altitude trajectory
     total_turn_deg = crit_result.get('total_turn_deg', 0) if crit_result else 0
@@ -205,6 +217,27 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
 
     e = _html.escape
 
+    # Build wind component string for the conditions table
+    if headwind_kt is not None and crosswind_kt is not None and wind_speed > 0:
+        if abs(crosswind_kt) < 0.05:
+            xw_str = "0 kt"
+        else:
+            xw_str = f"{abs(crosswind_kt):.1f} kt {'RIGHT' if crosswind_kt > 0 else 'LEFT'} cross"
+        if abs(headwind_kt) < 0.05:
+            hw_str = "0 kt along"
+        else:
+            hw_str = f"{abs(headwind_kt):.1f} kt {'HEAD' if headwind_kt > 0 else 'TAIL'}wind"
+        wind_components_html = f"{hw_str} · {xw_str}"
+    else:
+        wind_components_html = "—"
+    if wind_from_true is not None and wind_speed > 0:
+        wind_surface_html = (
+            f"{_fmt_int(wind_speed, ' kt')} from {int(round(wind_from_true)):03d}° true "
+            f"(rel runway {int(round(wind_from_deg)):03d}°)"
+        )
+    else:
+        wind_surface_html = f"{_fmt_int(wind_speed, ' kt')} from {_fmt_int(wind_from_deg, '°')} (rel. runway)"
+
     body = f"""
     <h1>Takeoff Data Card — Turnback Analysis</h1>
     <div class='header-meta'>Generated {e(timestamp)} · Turnback Simulator (turnback.voloaltro.tech)</div>
@@ -221,7 +254,8 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
         <tr><td class='label'>Altimeter</td><td class='value'>{e(altimeter_str)}</td></tr>
       </table>
       <table>
-        <tr><td class='label'>Surface wind</td><td class='value'>{_fmt_int(wind_speed, ' kt')} from {_fmt_int(wind_from_deg, '°')} (rel. runway)</td></tr>
+        <tr><td class='label'>Surface wind</td><td class='value'>{wind_surface_html}</td></tr>
+        <tr><td class='label'>Wind components</td><td class='value'><strong>{wind_components_html}</strong></td></tr>
         <tr><td class='label'>Climb-out KIAS</td><td class='value'>{_fmt_int(airspeed, ' KIAS')}</td></tr>
         <tr><td class='label'>Takeoff flap</td><td class='value'>{e(_FLAP_LABELS.get(flap_takeoff, str(flap_takeoff)))}</td></tr>
         <tr><td class='label'>Turn flap</td><td class='value'>{e(_FLAP_LABELS.get(flap_turn, str(flap_turn)))}</td></tr>
@@ -236,10 +270,10 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
 
     <h2>Runway</h2>
     <table>
-      <tr><td class='label'>Available runway length</td><td class='value'>{_fmt_int(runway_length, ' ft')}</td></tr>
+      <tr><td class='label'>Available runway length</td><td class='value'>{_fmt_int(runway_length_published, ' ft')}</td></tr>
       <tr><td class='label'>Liftoff distance (POH-scaled)</td><td class='value'>{_fmt_int(liftoff_distance, ' ft')}</td></tr>
       <tr><td class='label'>Last-abort point on runway</td><td class='value'>—  <span class='muted'>(future feature)</span></td></tr>
-      <tr><td class='label'>Straight-ahead landing limit</td><td class='value'>0 – {_fmt_int(sa_max, ' ft AGL')} <span class='muted'>(failure below this altitude → land straight on remaining runway)</span></td></tr>
+      <tr><td class='label'>Straight-ahead landing limit</td><td class='value'>0 – {_fmt_int(sa_max, ' ft AGL')} <span class='muted'>(failure below this altitude → land straight ahead, staying within the airport boundary — not just the runway asphalt)</span></td></tr>
     </table>
 
     <h2>Turnback — Critical Decision Numbers</h2>
@@ -247,7 +281,8 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
       <div class='big'>
         <div class='label'>Recommended minimum altitude</div>
         <div class='number'>{_fmt_int(crit_recommend, ' ft AGL')}</div>
-        <div class='sub'>Calc {_fmt_int(crit_min)} ft × {safety_margin_factor:.2f} safety factor.<br>
+        <div class='sub'><strong>{_fmt_int(crit_recommend_msl, ' ft MSL')}</strong> on your altimeter.<br>
+        Calc {_fmt_int(crit_min)} ft × <strong>{safety_margin_factor:.2f} safety factor</strong>.<br>
         Below this altitude on takeoff: <strong>land straight ahead.</strong></div>
       </div>
       <div class='big'>
@@ -258,8 +293,8 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     </div>
 
     <table>
-      <tr><td class='label'>Critical altitude — turn LEFT</td><td class='value'>{_fmt_int(crit_left, ' ft AGL')}</td></tr>
-      <tr><td class='label'>Critical altitude — turn RIGHT</td><td class='value'>{_fmt_int(crit_right, ' ft AGL')}</td></tr>
+      <tr><td class='label'>Critical altitude — turn LEFT</td><td class='value'>{_fmt_int(crit_left, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(crit_left_msl, ' ft MSL')}</strong>)</span></td></tr>
+      <tr><td class='label'>Critical altitude — turn RIGHT</td><td class='value'>{_fmt_int(crit_right, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(crit_right_msl, ' ft MSL')}</strong>)</span></td></tr>
       <tr><td class='label'>Threshold-crossing altitude (margin)</td><td class='value'>{_fmt_int(threshold_alt, ' ft AGL')}</td></tr>
       <tr><td class='label'>Total degrees of turn required</td><td class='value'>{_fmt_int(total_turn_deg, '°')}</td></tr>
       <tr><td class='label'>Altitude lost per 180° of turn</td><td class='value'>{_fmt_int(loss_per_180, ' ft')}</td></tr>

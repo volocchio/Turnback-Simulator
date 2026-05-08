@@ -29,6 +29,30 @@ try:
 except st.errors.StreamlitAPIException:
     pass  # already set when embedded in another app
 
+# Charlie #10 — make the help-bubble (?) icon larger and the popover text
+# larger.  Streamlit's default 16px icon is hard to see, especially for
+# pilots reading on a tablet in the cockpit.
+st.markdown(
+    """
+    <style>
+      /* Bigger help-bubble (?) icon next to widget labels */
+      [data-testid="stTooltipIcon"] svg,
+      [data-testid="stTooltipHoverTarget"] svg {
+          width: 22px !important;
+          height: 22px !important;
+          color: #0a3a5c !important;
+      }
+      /* Bigger help-popover body text */
+      [data-baseweb="tooltip"] {
+          font-size: 14px !important;
+          line-height: 1.45 !important;
+          max-width: 360px !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def run_turnback_page():
     """Render the Turnback Simulator page."""
@@ -443,19 +467,34 @@ def run_turnback_page():
         from engine.airport_db import wind_components
         hw, xw, rel = wind_components(wind_from_true, wind_speed, runway_heading_true)
         wind_from_deg = int(round(rel))  # relative angle for sim API
-        if wind_speed > 0:
-            xw_label = f"{abs(xw):.1f} kt {'right' if xw > 0 else 'left'}" if abs(xw) > 0.05 else "0 kt"
-            hw_label = f"{abs(hw):.1f} kt {'headwind' if hw > 0 else 'tailwind'}" if abs(hw) > 0.05 else "0 kt"
-            st.sidebar.caption(
-                f"Wind {wind_from_true:03d}/{wind_speed:02d} kt → "
-                f"{hw_label}, {xw_label} cross"
-            )
     else:
-        # Already runway-relative (legacy mode)
+        # Already runway-relative (legacy mode) — derive HW/XW from relative angle
+        from engine.airport_db import wind_components
         wind_from_deg = wind_from_true
-        if wind_speed > 0:
-            st.sidebar.caption(
-                f"Surface wind {wind_speed} kt from {wind_from_deg}° relative to runway heading"
+        # In legacy mode, runway heading is treated as 0; wind_from_true IS rel.
+        hw, xw, rel = wind_components(wind_from_true, wind_speed, 0.0)
+
+    # Charlie #A1/A2/12 — surface HW/XW components prominently so crosswind
+    # behaviour is never silently ambiguous.  Always shown when wind > 0.
+    if wind_speed > 0:
+        if abs(xw) < 0.05:
+            xw_label = "0 kt"
+        else:
+            xw_label = f"{abs(xw):.1f} kt {'RIGHT' if xw > 0 else 'LEFT'} cross"
+        if abs(hw) < 0.05:
+            hw_label = "0 kt along"
+        else:
+            hw_label = f"{abs(hw):.1f} kt {'HEAD' if hw > 0 else 'TAIL'}"
+        if use_airport_db:
+            st.sidebar.info(
+                f"**Wind {wind_from_true:03d}°T / {wind_speed:02d} kt**  \n"
+                f"Relative to runway: **{int(round(rel)):03d}°**  \n"
+                f"→ {hw_label} · {xw_label}"
+            )
+        else:
+            st.sidebar.info(
+                f"**Wind {wind_speed:02d} kt from {wind_from_deg:03d}° (rel. runway)**  \n"
+                f"→ {hw_label} · {xw_label}"
             )
     
     # Wind at altitude (ForeFlight data) — flexible rows (Charlie #4)
@@ -598,6 +637,10 @@ def run_turnback_page():
         aim_point = 0.0
         touchdown_margin_ft = 0.0
 
+    # Always remember the *published* DB length so the data card can show it
+    # even when the runway model is OFF (Charlie #A3).
+    runway_length_published = float(runway_length_db) if runway_length_db > 0 else 0.0
+
     # Flap on return only (only relevant without runway model)
     flap_on_return = False
     if flap_setting > 0 and not use_runway:
@@ -691,7 +734,11 @@ def run_turnback_page():
             'ac_key': ac_key,
             'wind_speed': wind_speed,
             'wind_from_deg': wind_from_deg,
+            'wind_from_true': wind_from_true,
+            'headwind_kt': hw,
+            'crosswind_kt': xw,
             'runway_length': runway_length,
+            'runway_length_published': runway_length_published,
             'liftoff_distance': liftoff_distance,
             'aim_point': envelope[0]['left'].get('computed_aim_y', 0.0) if envelope else 0.0,
             'speed_mode': speed_mode,
@@ -777,7 +824,11 @@ def run_turnback_page():
                 'ac_key': ac_key,
                 'wind_speed': wind_speed,
                 'wind_from_deg': wind_from_deg,
+                'wind_from_true': wind_from_true,
+                'headwind_kt': hw,
+                'crosswind_kt': xw,
                 'runway_length': runway_length,
+                'runway_length_published': runway_length_published,
                 'liftoff_distance': liftoff_distance,
                 'aim_point': env[0]['left'].get('computed_aim_y', 0.0) if env else 0.0,
                 'speed_mode': speed_mode,
