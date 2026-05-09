@@ -1120,7 +1120,7 @@ def run_turnback_page():
     else:
         col5.metric("Turn Radius", "—")
 
-    # ── Runway zone analysis (straight-ahead vs dead zone vs turnback) ──
+    # ── Runway zone analysis (straight-ahead vs critical zone vs turnback) ──
     straight_ahead_max_alt = res.get('straight_ahead_max_alt', 0.0)
     use_runway = res.get('runway_length', 0) > 0
     if use_runway:
@@ -1151,30 +1151,56 @@ def run_turnback_page():
 
         if dead_zone_low < dead_zone_high:
             dead_zone_size = dead_zone_high - dead_zone_low
+            # Exposure time: how many seconds the airplane is climbing through
+            # the critical band before it reaches a survivable turnback altitude.
+            # ROC_fpm = climb_gradient × V_TAS_fpm; V_TAS = KIAS / sqrt(σ).
+            try:
+                from engine.flight_physics import atmos as _atmos
+                _grad_exp = res.get('climb_gradient', 0.07) or 0.07
+                _mid_alt = field_elev + (dead_zone_low + dead_zone_high) / 2.0
+                _, _, _sigma_exp, _, _, _ = _atmos(_mid_alt, isa_dev)
+                _vtas_kt = airspeed / max(_sigma_exp ** 0.5, 0.1)
+                _vtas_fpm = _vtas_kt * 6076.12 / 60.0
+                _roc_fpm = max(_grad_exp * _vtas_fpm, 1.0)
+                _exposure_s = dead_zone_size / _roc_fpm * 60.0
+                _exposure_str = f"  ·  exposure ≈ {_exposure_s:.0f} s @ {_roc_fpm:,.0f} fpm"
+            except Exception:
+                _exposure_str = ""
+                _exposure_s = 0.0
+                _roc_fpm = 0.0
             zone_cols[1].metric(
-                "DEAD ZONE",
+                "CRITICAL ZONE",
                 f"{dead_zone_low:,} – {dead_zone_high:,} ft AGL",
-                delta=f"{dead_zone_size:,} ft gap  ·  MSL {dead_zone_low + int(_fe):,}–{dead_zone_high + int(_fe):,}",
+                delta=f"{dead_zone_size:,} ft gap  ·  MSL {dead_zone_low + int(_fe):,}–{dead_zone_high + int(_fe):,}{_exposure_str}",
                 delta_color="inverse",
-                help="Can't land straight (overshoots) AND can't make the turnback (too low)",
+                help="Can't land straight (overshoots) AND can't make the turnback (too low). "
+                     "Exposure ≈ time spent climbing through this band before reaching a "
+                     "survivable turnback altitude (band height ÷ rate of climb).",
+            )
+            _exp_phrase = (
+                f" The climb-through exposure is **≈ {_exposure_s:.0f} seconds** at "
+                f"~{_roc_fpm:,.0f} fpm — that's how long an engine failure puts you "
+                f"in this trap on every takeoff."
+                if _roc_fpm > 0 else ""
             )
             st.warning(
-                f"⚠️ **Dead zone: {dead_zone_low:,} – {dead_zone_high:,} ft AGL "
+                f"⚠️ **Critical zone: {dead_zone_low:,} – {dead_zone_high:,} ft AGL "
                 f"({dead_zone_low + int(_fe):,} – {dead_zone_high + int(_fe):,} ft MSL)** "
                 f"— {dead_zone_size:,} ft band. In this altitude band, the aircraft "
                 f"overshoots the runway going straight ahead but is too low to complete "
                 f"the turnback. This is the most dangerous failure altitude range."
+                f"{_exp_phrase}"
             )
         elif dead_zone_low >= dead_zone_high:
             zone_cols[1].metric(
-                "Dead Zone",
+                "Critical Zone",
                 "NONE",
                 delta="Full coverage!",
                 delta_color="normal",
                 help="Straight-ahead and turnback zones overlap — no uncovered altitude band",
             )
             st.success(
-                "✅ **No dead zone!** Straight-ahead landing coverage extends to or "
+                "✅ **No critical zone!** Straight-ahead landing coverage extends to or "
                 "above the turnback critical altitude. Every failure altitude has "
                 "a survivable option."
             )
@@ -1213,12 +1239,12 @@ def run_turnback_page():
                 _grad = res.get('climb_gradient', 0.07) or 0.07
                 _climb_to_dz = straight_ahead_max_alt / max(_grad, 0.01)
                 _y_at_dz = _liftoff_y + _climb_to_dz
-                geo_cols[3].metric("Position at dead-zone-low",
+                geo_cols[3].metric("Position at critical-zone-low",
                                    f"y ≈ {_y_at_dz:,.0f} ft",
                                    f"{_rwy_len - _y_at_dz:,.0f} ft of runway ahead",
                                    delta_color="off")
             else:
-                geo_cols[3].metric("Position at dead-zone-low", "n/a",
+                geo_cols[3].metric("Position at critical-zone-low", "n/a",
                                    "SA not feasible from any altitude", delta_color="off")
             st.caption(
                 "Coordinate system: **y = 0 at the departure-end runway threshold**, "

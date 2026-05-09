@@ -519,9 +519,9 @@ def build_satellite_map(
             fill=True,
             fill_opacity=0.12,
             popup=(f"Glide reach @ {dead_zone_low_ft:.0f} ft AGL "
-                   f"(low end of dead zone) — radius "
+                   f"(low end of critical zone) — radius "
                    f"{glide_radius_low_m / _M_PER_NM:.2f} nm"),
-            tooltip=f"Dead-zone LOW: {dead_zone_low_ft:.0f} ft AGL",
+            tooltip=f"Critical-zone LOW: {dead_zone_low_ft:.0f} ft AGL",
         ).add_to(fmap)
         folium.CircleMarker(
             location=list(failure_point_low),
@@ -539,9 +539,9 @@ def build_satellite_map(
             fill=True,
             fill_opacity=0.10,
             popup=(f"Glide reach @ {dead_zone_high_ft:.0f} ft AGL "
-                   f"(top of dead zone / turnback critical) — radius "
+                   f"(top of critical zone / turnback critical) — radius "
                    f"{glide_radius_high_m / _M_PER_NM:.2f} nm"),
-            tooltip=f"Dead-zone HIGH: {dead_zone_high_ft:.0f} ft AGL",
+            tooltip=f"Critical-zone HIGH: {dead_zone_high_ft:.0f} ft AGL",
         ).add_to(fmap)
         folium.CircleMarker(
             location=list(failure_point_high),
@@ -788,8 +788,8 @@ def render_landing_map_section(
     st.markdown("---")
     st.subheader("🛰️ Satellite Map — Forced-Landing Analysis")
     st.caption(
-        "Visualize the **dead-zone glide footprint** at your chosen airport. "
-        "The dead zone is the altitude band where you can't land on the "
+        "Visualize the **critical-zone glide footprint** at your chosen airport. "
+        "The critical zone is the altitude band where you can't land on the "
         "remaining runway and can't make the turnback — these are the "
         "altitudes where picking a forced-landing site matters most."
     )
@@ -857,7 +857,7 @@ def render_landing_map_section(
     )
     if dead_high <= dead_low:
         st.success(
-            "✅ **No dead zone with current parameters.** Straight-ahead "
+            "✅ **No critical zone with current parameters.** Straight-ahead "
             "landing coverage extends to or above the turnback critical "
             "altitude. The glide footprint shown is at the turnback "
             "critical altitude only."
@@ -865,7 +865,7 @@ def render_landing_map_section(
         # Still show a single ring at the turnback critical alt
         dead_low = dead_high
     elif dead_high <= 0:
-        st.info("Build the envelope first to compute the dead zone.")
+        st.info("Build the envelope first to compute the critical zone.")
         return
 
     # ── Failure points & glide radii ──
@@ -888,7 +888,7 @@ def render_landing_map_section(
         f"{airport.name[:30]}",
     )
     info_cols[1].metric(
-        "Dead-zone band",
+        "Critical-zone band",
         f"{dead_low:,.0f} – {dead_high:,.0f} ft",
         f"{(dead_high - dead_low):,.0f} ft band",
     )
@@ -1158,11 +1158,11 @@ def render_landing_map_section(
 - **Blue plane icon** — airport reference point (`{airport.icao or airport.code}`).
 - **Yellow line** — runway departure centerline (heading {runway_heading:.0f}°).
 - **Red dot + faint red circle** — engine failure at the **low end** of the
-  dead zone ({dead_low:,.0f} ft AGL). Glide footprint radius
+  critical zone ({dead_low:,.0f} ft AGL). Glide footprint radius
   ≈ **{r_low_m / _M_PER_NM:.2f} nm**. *Above the runway-survival altitude
   but too low to turn back* — pick a landing site within this circle.
 - **Yellow dot + faint yellow circle** — engine failure at the **top** of
-  the dead zone ({dead_high:,.0f} ft AGL — the turnback critical
+  the critical zone ({dead_high:,.0f} ft AGL — the turnback critical
   altitude). Glide footprint ≈ **{r_high_m / _M_PER_NM:.2f} nm**. Above
   this altitude the turnback becomes feasible.
 - **Dashed blue line** — wind direction (from).
