@@ -827,39 +827,96 @@ def run_turnback_page():
         "final approach. Forward slip added if needed to make the runway."
     )
 
-    # Prop state after engine failure
+    # Prop state after engine failure — 2-step picker.
+    # Step 1: prop *type* (fixed-pitch vs variable-pitch / CS / feathering).
+    # Step 2: rotational state (stopped vs windmilling vs feathered-spinning, etc.).
     st.sidebar.markdown("---")
     st.sidebar.subheader("Prop Drag")
-    prop_state_options = {
-        'feathered':           'Feathered (ΔCDo = +0.0005)',
-        'windmilling':         'Windmilling / spinning (ΔCDo = +0.0020)',
-        'fixed_pitch_stopped': 'Fixed-pitch prop stopped (ΔCDo = +0.0015)',
-        'stopped':             'Stopped / unfeathered (ΔCDo = +0.0040)',
+
+    # Auto-detect a sensible default prop type from the aircraft.  Turboprops
+    # and twin-engine CS pistons (Mustang/CJ family aren't single-engine, but
+    # turbines + retractable singles like the Meridian) default to variable.
+    _ac_name = ac_key[0] if isinstance(ac_key, (tuple, list)) else str(ac_key)
+    _vp_default_models = {
+        'Meridian',        # PT6 turboprop, feathering
+        'TBM700', 'TBM850', 'TBM900', 'TBM930', 'TBM940', 'TBM960',
+        'PC-12', 'PC12',
+        'Bonanza', 'A36', 'V35',
+        'Mooney', 'M20',
+        'C182RG', 'C210',
+        'SR22', 'SR22T',
     }
+    _default_prop_type = 'variable' if _ac_name in _vp_default_models else 'fixed'
+
+    prop_type = st.sidebar.radio(
+        "Prop type",
+        options=['fixed', 'variable'],
+        format_func=lambda v: {
+            'fixed': 'Fixed-pitch',
+            'variable': 'Variable-pitch (constant-speed / feathering)',
+        }[v],
+        index=0 if _default_prop_type == 'fixed' else 1,
+        key=f"prop_type_{_ac_name}",
+        help=(
+            "**Fixed-pitch**: most trainers (C150/152/172, Cherokee 140, J3 Cub, "
+            "many RVs).  Blade angle is fixed; prop either windmills or stops.\n\n"
+            "**Variable-pitch**: constant-speed prop with a governor.  Pilot can "
+            "coarsen the blade angle ('pull the blue lever back') to reduce drag, "
+            "and on feathering installations (turboprops, twins, some CS singles) "
+            "can take the blades all the way to feather (edge-on to the airflow)."
+        ),
+    )
+
+    if prop_type == 'fixed':
+        prop_state_options = {
+            'fp_windmilling': 'Windmilling (default — prop freewheels)  ΔCDo +0.0020',
+            'fp_stopped':     'Stopped (slow below windmill threshold)  ΔCDo +0.0015',
+        }
+        _state_help = (
+            "After engine failure on a fixed-pitch single:\n\n"
+            "• **Windmilling**: prop continues to spin freely.  This is what "
+            "happens by default — the airstream keeps the disc rotating, "
+            "presenting a flat plate to the flow.  Largest drag of the two.\n\n"
+            "• **Stopped**: if the pilot slows the airplane below the prop "
+            "windmill speed (typically near the stall), the prop stops "
+            "rotating.  Slightly less drag (~0.0005 ΔCDo improvement).\n\n"
+            "Trade-off: stopping the prop costs airspeed and altitude, and "
+            "is rarely worth it during a turnback — pick **windmilling** "
+            "for the realistic case."
+        )
+        _default_state_idx = 0
+    else:
+        prop_state_options = {
+            'vp_feathered_stopped':  'Feathered & stopped (best case)  ΔCDo +0.0005',
+            'vp_feathered_spinning': 'Feathered & spinning (residual rotation)  ΔCDo +0.0010',
+            'vp_unfeathered':        'Unfeathered (oil-pressure loss / no feather)  ΔCDo +0.0040',
+        }
+        _state_help = (
+            "After engine failure on a variable-pitch (CS / feathering) single:\n\n"
+            "• **Feathered & stopped**: blades fully edge-on to the airflow AND "
+            "the disc has stopped rotating.  Minimum-drag case.  Typical of "
+            "turboprops (Meridian, TBM, PC-12) when the pilot pulls the "
+            "condition lever to FEATHER and the auto-feather system completes.\n\n"
+            "• **Feathered & spinning**: blades feathered but the disc still "
+            "rotates slowly (residual oil pressure, or airspeed too high to "
+            "stop the prop).  Slightly more drag than feathered & stopped.\n\n"
+            "• **Unfeathered**: oil-pressure loss leaves CS blades in a flat "
+            "low-pitch position, or the pilot never pulled the prop lever to "
+            "coarse pitch.  Largest drag of any state — worse than fixed-pitch "
+            "windmilling.  This is the worst-case CS-prop failure.\n\n"
+            "Brief item: if the engine quits, **immediately** pull the prop "
+            "control to coarse / feather to move from unfeathered toward the "
+            "feathered cases."
+        )
+        _default_state_idx = 0
+
     prop_state = st.sidebar.radio(
-        "Prop state after engine failure",
+        "Prop rotational state",
         list(prop_state_options.keys()),
         format_func=lambda x: prop_state_options[x],
-        index=0,
-        help=(
-            "How the propeller behaves once thrust is lost.  Drag matters: a "
-            "windmilling prop can cost ~150–250 ft of glide range per 1,000 ft "
-            "of altitude vs. feathered.\n\n"
-            "• **Feathered** (turboprop or feathering CS prop pulled into "
-            "feather): blades edge-on to the airflow, near-zero rotation, "
-            "minimum drag — adds ~ΔCDo +0.0005.\n\n"
-            "• **Windmilling**: prop freewheels, blades present a large flat "
-            "disc to the airflow.  Default for fixed-pitch and most CS props "
-            "if the pilot does nothing.  ΔCDo +0.0020.\n\n"
-            "• **Fixed-pitch stopped**: small fixed-pitch prop that stalled "
-            "the engine and quit rotating.  Slightly less drag than "
-            "windmilling.  ΔCDo +0.0015.\n\n"
-            "• **Stopped / unfeathered** (CS prop, oil pressure lost, blades "
-            "flat to flow): worst case.  ΔCDo +0.0040.\n\n"
-            "Pick the state that matches *your* aircraft and your post-failure "
-            "drill (e.g. CS-prop pilots should pull the blue lever to coarse "
-            "pitch even if they can't fully feather)."
-        ),
+        index=_default_state_idx,
+        key=f"prop_state_{_ac_name}_{prop_type}",
+        help=_state_help,
     )
 
     gear_down = True  # default for fixed-gear aircraft

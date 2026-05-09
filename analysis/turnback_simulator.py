@@ -23,12 +23,38 @@ from engine.flight_physics import atmos
 G_FPS2 = 32.174  # ft/s²
 DT = 0.05         # time step (seconds) — small for accuracy in tight turns
 
-# Prop drag increments (ΔCDo) after engine failure
+# Prop drag increments (ΔCDo) after engine failure.
+#
+# Two prop types × distinct rotational states:
+#   FIXED-PITCH (no feather capability):
+#     fp_stopped          — prop stopped (engine seized or pilot brought airspeed
+#                           below the prop windmill threshold).  Less drag.
+#     fp_windmilling      — prop freewheeling in the airstream.  Default outcome
+#                           for fixed-pitch singles after engine failure.
+#   VARIABLE-PITCH (constant-speed / feathering):
+#     vp_feathered_stopped  — blades fully feathered (edge-on) AND rotation
+#                              stopped.  Minimum-drag case (turboprops, CS pistons
+#                              that successfully feathered + slowed prop).
+#     vp_feathered_spinning — blades feathered but disc still rotating slowly
+#                              (residual oil pressure or pilot didn't get airspeed
+#                              low enough to stop the prop).
+#     vp_unfeathered        — CS prop with oil-pressure loss or pilot did not
+#                              pull the blue lever; blades stay flat to the flow.
+#                              Worst case.
+#
+# Legacy keys ('feathered', 'windmilling', 'fixed_pitch_stopped', 'stopped') are
+# preserved as aliases for back-compat with old saved sessions and tests.
 PROP_DRAG_INCREMENTS = {
-    'feathered':           0.0005,  # blades edge-on — small residual (hub, spinner, blade thickness)
-    'windmilling':         0.0020,  # prop spinning freely in the airstream
-    'fixed_pitch_stopped': 0.0015,  # small fixed-pitch prop stopped / not spinning
-    'stopped':             0.0040,  # blades flat / unfeathered — maximum drag
+    'fp_stopped':            0.0015,
+    'fp_windmilling':        0.0020,
+    'vp_feathered_stopped':  0.0005,
+    'vp_feathered_spinning': 0.0010,
+    'vp_unfeathered':        0.0040,
+    # legacy aliases
+    'feathered':             0.0005,
+    'windmilling':           0.0020,
+    'fixed_pitch_stopped':   0.0015,
+    'stopped':               0.0040,
 }
 
 
