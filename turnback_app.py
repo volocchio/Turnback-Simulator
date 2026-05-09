@@ -21,6 +21,7 @@ from engine.poh_data import (
 from analysis.turnback_simulator import (
     build_turnback_envelope, simulate_turnback, optimize_turnback, best_glide_kias,
     simulate_straight_ahead, find_straight_ahead_max_altitude,
+    find_critical_altitude,
     _select_vbg_override,
 )
 from analysis.data_card import build_takeoff_data_card, build_takeoff_data_card_pdf
@@ -1741,6 +1742,204 @@ def run_turnback_page():
     # ── Detailed data table for critical altitude ──
     with st.expander("Trajectory Data — Critical Altitudes"):
         _show_trajectory_table(envelope, critical_alt)
+
+    # ── Sensitivity charts (Phase 2 — bank angle & reaction time) ──
+    st.markdown("---")
+    st.subheader("📈 Sensitivity — How the answer moves with your assumptions")
+    st.caption(
+        "These charts re-run the critical-altitude search across one variable "
+        "at a time, holding everything else fixed.  They turn the *single number* "
+        "above into an **education about which knobs matter most.**"
+    )
+    sens_cols = st.columns(2)
+    do_bank_sens = sens_cols[0].button(
+        "Run bank-angle sensitivity",
+        help="Re-runs the critical-altitude search across 25°/30°/35°/40°/45°/50°/55° "
+             "of bank, holding all other inputs fixed.  Shows how steeper bank "
+             "trades altitude needed (smaller turn) against stall-margin loss.",
+        key="run_bank_sens",
+    )
+    do_reaction_sens = sens_cols[1].button(
+        "Run reaction-time sensitivity",
+        help="Re-runs the critical-altitude search across 0/2/3/5/7/10 sec of "
+             "reaction time.  Most pilots underestimate this — every second of "
+             "delay costs hundreds of feet in cold-startle scenarios.",
+        key="run_reaction_sens",
+    )
+
+    # Persist results so the chart stays after a Streamlit rerun
+    if do_bank_sens:
+        bank_angles_sweep = [25, 30, 35, 40, 45, 50, 55]
+        crit_by_bank_left = []
+        crit_by_bank_right = []
+        with st.spinner("Sweeping bank angles..."):
+            for ba in bank_angles_sweep:
+                cl = find_critical_altitude(
+                    config, weight, airspeed, ba, flap_setting,
+                    reaction_time, field_elev, isa_dev,
+                    wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
+                    wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                    wind_profile=wind_profile, wind_dir_profile=wind_dir_profile,
+                    turn_direction='left',
+                    runway_length=runway_length, liftoff_distance=liftoff_distance,
+                    aim_point=aim_point, flap_on_return=flap_on_return,
+                    speed_mode=speed_mode, prop_state=prop_state,
+                    gear_down=gear_down, gear_retract_time_s=gear_retract_time_s,
+                    intersection_offset_ft=intersection_offset_ft,
+                    vbg_clean_kias=vbg_clean_kias, vbg_geardown_kias=vbg_geardown_kias,
+                    vbg_landing_kias=vbg_landing_kias,
+                    touchdown_margin_ft=touchdown_margin_ft,
+                    runway_friction=runway_friction, climb_steering=climb_steering,
+                )
+                cr = find_critical_altitude(
+                    config, weight, airspeed, ba, flap_setting,
+                    reaction_time, field_elev, isa_dev,
+                    wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
+                    wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                    wind_profile=wind_profile, wind_dir_profile=wind_dir_profile,
+                    turn_direction='right',
+                    runway_length=runway_length, liftoff_distance=liftoff_distance,
+                    aim_point=aim_point, flap_on_return=flap_on_return,
+                    speed_mode=speed_mode, prop_state=prop_state,
+                    gear_down=gear_down, gear_retract_time_s=gear_retract_time_s,
+                    intersection_offset_ft=intersection_offset_ft,
+                    vbg_clean_kias=vbg_clean_kias, vbg_geardown_kias=vbg_geardown_kias,
+                    vbg_landing_kias=vbg_landing_kias,
+                    touchdown_margin_ft=touchdown_margin_ft,
+                    runway_friction=runway_friction, climb_steering=climb_steering,
+                )
+                crit_by_bank_left.append(cl)
+                crit_by_bank_right.append(cr)
+        # Stall speed in turn at each bank
+        vs_clean_kias = math.sqrt(295.0 * weight / (config.wing_area * config.Clmax))
+        vs_at_bank = [vs_clean_kias / math.sqrt(math.cos(math.radians(b))) for b in bank_angles_sweep]
+        st.session_state['bank_sens'] = {
+            'banks': bank_angles_sweep,
+            'crit_left': crit_by_bank_left,
+            'crit_right': crit_by_bank_right,
+            'vs_at_bank': vs_at_bank,
+            'cur_bank': bank_angle,
+            'cur_crit_left': critical_alt_left,
+            'cur_crit_right': critical_alt_right,
+            'airspeed': airspeed,
+        }
+
+    if 'bank_sens' in st.session_state:
+        bs = st.session_state['bank_sens']
+        fig_bs = go.Figure()
+        fig_bs.add_trace(go.Scatter(
+            x=bs['banks'], y=bs['crit_left'],
+            mode='lines+markers', name='Critical alt — LEFT turn (ft AGL)',
+            line=dict(color='#1f77b4', width=3), marker=dict(size=10),
+        ))
+        fig_bs.add_trace(go.Scatter(
+            x=bs['banks'], y=bs['crit_right'],
+            mode='lines+markers', name='Critical alt — RIGHT turn (ft AGL)',
+            line=dict(color='#ff7f0e', width=3, dash='dash'), marker=dict(size=10),
+        ))
+        fig_bs.add_trace(go.Scatter(
+            x=[bs['cur_bank']],
+            y=[min(bs['cur_crit_left'], bs['cur_crit_right'])],
+            mode='markers', name=f'Your selection ({bs["cur_bank"]}°)',
+            marker=dict(size=18, color='red', symbol='star'),
+        ))
+        # Stall-speed-in-turn on secondary axis
+        fig_bs.add_trace(go.Scatter(
+            x=bs['banks'], y=bs['vs_at_bank'],
+            mode='lines', name='Vs in turn (KIAS)',
+            line=dict(color='#d62728', width=2, dash='dot'),
+            yaxis='y2',
+        ))
+        fig_bs.add_hline(
+            y=bs['airspeed'], line_dash='dot', line_color='gray',
+            annotation_text=f'Climb speed {bs["airspeed"]:.0f} KIAS',
+            annotation_position='top right',
+            yref='y2',
+        )
+        fig_bs.update_layout(
+            title='Critical altitude vs bank angle  ·  with accelerated stall overlay',
+            xaxis_title='Bank angle in turnback (deg)',
+            yaxis=dict(title='Critical altitude (ft AGL)', side='left'),
+            yaxis2=dict(title='Vs in turn (KIAS)', overlaying='y', side='right'),
+            height=420,
+            hovermode='x unified',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        )
+        st.plotly_chart(fig_bs, use_container_width=True)
+        # Trade-off insight
+        i_min_left = bs['crit_left'].index(min(bs['crit_left']))
+        st.markdown(
+            f"**Read it like this:** the lowest critical altitude (LEFT turn) is "
+            f"**{min(bs['crit_left'])} ft AGL at {bs['banks'][i_min_left]}° bank**.  "
+            f"Steeper than that, the turn tightens but stall speed climbs and the airframe "
+            f"bleeds energy faster — no net win.  Shallower than that, the turn radius "
+            f"explodes and you need more altitude to complete it.  "
+            f"**This is why 'just bank harder' is wrong advice.**"
+        )
+
+    if do_reaction_sens:
+        reaction_sweep = [0, 2, 3, 5, 7, 10]
+        crit_by_rt = []
+        with st.spinner("Sweeping reaction times..."):
+            for rt in reaction_sweep:
+                ca = find_critical_altitude(
+                    config, weight, airspeed, bank_angle, flap_setting,
+                    rt, field_elev, isa_dev,
+                    wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
+                    wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                    wind_profile=wind_profile, wind_dir_profile=wind_dir_profile,
+                    turn_direction='left',
+                    runway_length=runway_length, liftoff_distance=liftoff_distance,
+                    aim_point=aim_point, flap_on_return=flap_on_return,
+                    speed_mode=speed_mode, prop_state=prop_state,
+                    gear_down=gear_down, gear_retract_time_s=gear_retract_time_s,
+                    intersection_offset_ft=intersection_offset_ft,
+                    vbg_clean_kias=vbg_clean_kias, vbg_geardown_kias=vbg_geardown_kias,
+                    vbg_landing_kias=vbg_landing_kias,
+                    touchdown_margin_ft=touchdown_margin_ft,
+                    runway_friction=runway_friction, climb_steering=climb_steering,
+                )
+                crit_by_rt.append(ca)
+        st.session_state['reaction_sens'] = {
+            'rts': reaction_sweep,
+            'crits': crit_by_rt,
+            'cur_rt': reaction_time,
+            'cur_crit': critical_alt_left,
+        }
+
+    if 'reaction_sens' in st.session_state:
+        rs = st.session_state['reaction_sens']
+        fig_rs = go.Figure()
+        fig_rs.add_trace(go.Scatter(
+            x=rs['rts'], y=rs['crits'],
+            mode='lines+markers', name='Critical alt (ft AGL)',
+            line=dict(color='#2ca02c', width=3), marker=dict(size=12),
+            fill='tozeroy', fillcolor='rgba(44,160,44,0.15)',
+        ))
+        fig_rs.add_trace(go.Scatter(
+            x=[rs['cur_rt']], y=[rs['cur_crit']],
+            mode='markers', name=f'Your selection ({rs["cur_rt"]}s)',
+            marker=dict(size=18, color='red', symbol='star'),
+        ))
+        fig_rs.update_layout(
+            title='Critical altitude vs pilot reaction time',
+            xaxis_title='Reaction time at engine failure (sec)',
+            yaxis_title='Critical altitude (ft AGL)',
+            height=380,
+            hovermode='x unified',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        )
+        st.plotly_chart(fig_rs, use_container_width=True)
+        if len(rs['crits']) >= 2 and rs['crits'][0] > 0:
+            cost_per_sec = (rs['crits'][-1] - rs['crits'][0]) / (rs['rts'][-1] - rs['rts'][0])
+            st.markdown(
+                f"**Read it like this:** every second of pilot reaction time costs "
+                f"roughly **{cost_per_sec:+.0f} ft** of critical altitude in this scenario.  "
+                f"At a 0-second 'pre-briefed' response, the airplane needs **{rs['crits'][0]} ft**.  "
+                f"At a realistic 5-second startle response, it needs **{rs['crits'][rs['rts'].index(5)] if 5 in rs['rts'] else '?'} ft**.  "
+                f"At a 10-second 'oh-shit' delay, it needs **{rs['crits'][-1]} ft**.  "
+                f"**The brief at the runway hold-short is the cheapest altitude you'll ever buy.**"
+            )
 
     # ── Theory & References ──
     st.markdown("---")
