@@ -869,6 +869,30 @@ def run_turnback_page():
     else:
         st.sidebar.caption("Fixed gear — gear drag included in base CDo")
 
+    # Charlie #E2 — climb-out steering toggle.  In real life pilots either
+    # crab into the wind (ground track stays on centerline) or hold the
+    # nose on runway heading and let the airplane drift downwind.  The
+    # latter shows up as a lateral offset at engine failure.
+    climb_steering = st.sidebar.radio(
+        "Climb-out steering",
+        options=['track', 'heading'],
+        format_func=lambda v: {
+            'track': 'Track hold (crab into wind)',
+            'heading': 'Heading hold (drift downwind)',
+        }[v],
+        index=0,
+        help=(
+            "Track hold: pilot crabs into the wind so the ground track "
+            "stays on the runway centerline at engine failure (typical "
+            "instructor demo, lateral offset = 0 ft).\n\n"
+            "Heading hold: pilot keeps the nose on runway heading; the "
+            "airplane drifts downwind during the climb so it is already "
+            "off centerline when the engine quits.  Pedagogically useful "
+            "to visualize how a crosswind biases the turnback toward the "
+            "downwind side."
+        ),
+    )
+
     # Altitude step & max
     alt_step = st.sidebar.select_slider(
         "Altitude step (ft)", options=[50, 100, 200, 500], value=100,
@@ -924,6 +948,7 @@ def run_turnback_page():
                 vbg_landing_kias=vbg_landing_kias,
                 touchdown_margin_ft=touchdown_margin_ft,
                 runway_friction=runway_friction,
+                climb_steering=climb_steering,
             )
 
         st.session_state['turnback_result'] = {
@@ -980,6 +1005,7 @@ def run_turnback_page():
                 vbg_landing_kias=vbg_landing_kias,
                 touchdown_margin_ft=touchdown_margin_ft,
                 runway_friction=runway_friction,
+                climb_steering=climb_steering,
             )
         st.session_state['optimizer_result'] = {
             'results': opt_results,
@@ -1017,6 +1043,7 @@ def run_turnback_page():
                     vbg_landing_kias=vbg_landing_kias,
                     touchdown_margin_ft=touchdown_margin_ft,
                     runway_friction=runway_friction,
+                    climb_steering=climb_steering,
                 )
             st.session_state['turnback_result'] = {
                 'critical_alt': crit,

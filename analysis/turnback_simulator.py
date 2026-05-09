@@ -251,7 +251,10 @@ def _estimate_climb_distance(config, weight, field_elevation, isa_dev, failure_a
     gradient = max(gradient, 0.02)  # at least 2% to avoid infinite distance
 
     distance_ft = failure_alt_agl / gradient
-    return distance_ft
+    # Time aloft to climb to failure altitude (used by E2 heading-hold drift).
+    # t_climb = distance / horizontal TAS, computed with the same v_fps.
+    time_s = distance_ft / max(v_fps, 1.0)
+    return distance_ft, time_s
 
 
 def _select_vbg_override(gear_down, landing_flaps_active, vbg_clean_kias, vbg_geardown_kias, vbg_landing_kias):
@@ -508,6 +511,7 @@ def simulate_turnback(
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Simulate the turnback maneuver after total engine failure.
 
@@ -654,14 +658,31 @@ def simulate_turnback(
     else:
         target_y = 0.0
 
-    climb_dist = _estimate_climb_distance(
+    climb_dist, climb_time_s = _estimate_climb_distance(
         config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb
     )
     dist_from_threshold = liftoff_distance + climb_dist
 
+    # E2: climb steering toggle.  In 'track' mode (default) the pilot crabs
+    # into wind so the ground track stays on centerline (x_init = 0).  In
+    # 'heading' mode the nose is held on runway heading and the airplane
+    # drifts downwind during the climb — by failure altitude the aircraft
+    # is offset from centerline by wind_x × climb_time.  Surface wind dir
+    # is used (climb is mostly low-altitude) for a clean apples-to-apples
+    # comparison with the published wind.
+    _wind_fps_sfc = wind_speed_kt * 6076.12 / 3600.0
+    _wind_x_sfc = -_wind_fps_sfc * math.sin(math.radians(wind_from_deg))
+    _wind_y_sfc = -_wind_fps_sfc * math.cos(math.radians(wind_from_deg))
+    if climb_steering == 'heading':
+        climb_drift_x = _wind_x_sfc * climb_time_s
+        climb_drift_y = _wind_y_sfc * climb_time_s
+    else:
+        climb_drift_x = 0.0
+        climb_drift_y = 0.0
+
     # --- Initial state ---
-    x = 0.0                      # lateral offset from runway centerline (ft, + = right)
-    y = intersection_offset_ft + dist_from_threshold  # E1: intersection departure
+    x = climb_drift_x            # lateral offset from runway centerline (ft, + = right)
+    y = intersection_offset_ft + dist_from_threshold + climb_drift_y
     z = failure_alt_agl          # altitude AGL (ft)
     heading = 0.0                # radians, 0 = runway heading (+Y direction)
     t = 0.0
@@ -1252,6 +1273,7 @@ def simulate_straight_ahead(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Simulate a straight-ahead landing after engine failure.
 
@@ -1316,14 +1338,22 @@ def simulate_straight_ahead(
         vbg_1g = None
         airspeed_for_climb = airspeed_kias
 
-    climb_dist = _estimate_climb_distance(
+    climb_dist, climb_time_s = _estimate_climb_distance(
         config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb
     )
     dist_from_threshold = liftoff_distance + climb_dist
 
+    # E2 climb-steering drift (see simulate_turnback for derivation).
+    if climb_steering == 'heading':
+        climb_drift_x = wind_x * climb_time_s
+        climb_drift_y = wind_y * climb_time_s
+    else:
+        climb_drift_x = 0.0
+        climb_drift_y = 0.0
+
     # Initial state
-    x = 0.0
-    y = intersection_offset_ft + dist_from_threshold  # E1: intersection departure
+    x = climb_drift_x
+    y = intersection_offset_ft + dist_from_threshold + climb_drift_y  # E1: intersection departure
     z = failure_alt_agl
     heading = 0.0  # straight ahead
     t = 0.0
@@ -1479,6 +1509,7 @@ def find_straight_ahead_max_altitude(
     vbg_geardown_kias=0,
     vbg_landing_kias=0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Find the maximum engine-failure altitude where a straight-ahead
     landing succeeds (touchdown + rollout fit on the remaining runway).
@@ -1505,6 +1536,7 @@ def find_straight_ahead_max_altitude(
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
         runway_friction=runway_friction,
+        climb_steering=climb_steering,
     )
 
     # Check lowest altitude
@@ -1556,6 +1588,7 @@ def find_critical_altitude(
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Find the minimum failure altitude that allows a safe return.
 
@@ -1583,6 +1616,7 @@ def find_critical_altitude(
         wind_profile=wind_profile,
         wind_dir_profile=wind_dir_profile,
         runway_friction=runway_friction,
+        climb_steering=climb_steering,
     )
 
     def _sim(alt):
@@ -1643,6 +1677,7 @@ def build_turnback_envelope(
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Build the full heart-shaped envelope at multiple failure altitudes.
 
@@ -1679,6 +1714,7 @@ def build_turnback_envelope(
         wind_profile=wind_profile,
         wind_dir_profile=wind_dir_profile,
         runway_friction=runway_friction,
+        climb_steering=climb_steering,
     )
 
     critical_alt_left = find_critical_altitude(
@@ -1716,6 +1752,7 @@ def build_turnback_envelope(
             vbg_clean_kias=vbg_clean_kias,
             vbg_geardown_kias=vbg_geardown_kias,
             vbg_landing_kias=vbg_landing_kias,
+            climb_steering=climb_steering,
         )
 
     if max_alt is None:
@@ -1749,6 +1786,7 @@ def build_turnback_envelope(
         vbg_clean_kias=vbg_clean_kias,
         vbg_geardown_kias=vbg_geardown_kias,
         vbg_landing_kias=vbg_landing_kias,
+        climb_steering=climb_steering,
     )
 
     for alt_agl in altitudes:
@@ -1814,6 +1852,7 @@ def optimize_turnback(
     vbg_landing_kias=0,
     touchdown_margin_ft=0.0,
     runway_friction=1.0,
+    climb_steering='track',
 ):
     """Sweep bank angle, turn direction, and flap strategy to find the
     combination that gives the lowest critical altitude.
@@ -1911,6 +1950,7 @@ def optimize_turnback(
                             vbg_landing_kias=vbg_landing_kias,
                             touchdown_margin_ft=touchdown_margin_ft,
                             runway_friction=runway_friction,
+                            climb_steering=climb_steering,
                         )
 
                         # Check overrun at critical altitude
@@ -1933,6 +1973,7 @@ def optimize_turnback(
                                 vbg_landing_kias=vbg_landing_kias,
                                 touchdown_margin_ft=touchdown_margin_ft,
                                 runway_friction=runway_friction,
+                                climb_steering=climb_steering,
                             )
                             overrun = test.get('runway_overrun', False)
 
