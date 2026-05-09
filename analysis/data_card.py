@@ -245,14 +245,14 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     if sa_max and crit_min:
         if sa_max + 50 < crit_min:
             warning_html = (
-                f"<p class='warn'><strong>⚠ DEAD ZONE:</strong> Engine failure between "
+                f"<p class='warn'><strong>⚠ CRITICAL ZONE:</strong> Engine failure between "
                 f"<strong>{int(round(sa_max)):,} ft</strong> and "
                 f"<strong>{int(round(crit_min)):,} ft AGL</strong> = no good options. "
                 f"Plan to climb through this band as quickly as possible.</p>"
             )
         else:
             warning_html = (
-                "<p class='ok'><strong>✓ NO DEAD ZONE:</strong> Straight-ahead and "
+                "<p class='ok'><strong>✓ NO CRITICAL ZONE:</strong> Straight-ahead and "
                 "turnback coverage overlap.  Every failure altitude has an option.</p>"
             )
 
@@ -415,7 +415,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
       <p><strong>Critical altitude</strong> is the lowest AGL at which the airplane can complete the turnback and reach the runway.  Below this, the turnback fails — the airplane runs out of altitude before the runway is in reach.  The LEFT/RIGHT split exists because crosswind drift, slope, and obstacles make the two directions asymmetric.  <strong>Always pick the lower of the two.</strong></p>
       <p><strong>The 180° figure</strong> is half-mythology in the cockpit.  In reality the turn must overshoot the runway centerline (typically 200–270°) so the airplane is aligned on final, not perpendicular.  The "Sequence of Events" table above shows the actual heading change.</p>
       <p><strong>Safety margin × Calculated</strong> = recommended go/no-go.  The calculated number is the bare aerodynamic minimum; the recommended number ({_fmt_int(crit_recommend, ' ft AGL')}) is what you brief.  Below the recommended altitude on takeoff, plan to land straight ahead within the airport boundary.</p>
-      <p><strong>Reaction time</strong> is the killer.  Three seconds doubles or triples the dead-zone altitude band.  Brief it on every takeoff: "engine quits below {_fmt_int(crit_recommend, ' ft AGL')} → straight ahead, no negotiation."</p>
+      <p><strong>Reaction time</strong> is the killer.  Three seconds doubles or triples the critical-zone altitude band.  Brief it on every takeoff: "engine quits below {_fmt_int(crit_recommend, ' ft AGL')} → straight ahead, no negotiation."</p>
       <p><strong>Bank angle</strong> trades stall margin for turn radius.  At {_fmt_int(bank, '°')} bank, stall speed is {(_fmt_dec(((1.0 / max(0.05, math.cos(math.radians(bank))))**0.5 - 1.0) * 100.0, 0, '%')) if bank > 0 else '0%'} higher than wings-level.  Steeper than 45° is rarely worth it: the radius gain is small but the stall margin shrinks fast.</p>
     </div>
 
