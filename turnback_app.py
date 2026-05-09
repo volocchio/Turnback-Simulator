@@ -11,7 +11,11 @@ import math
 import pandas as pd
 
 from engine.aircraft_config import AIRCRAFT_CONFIG
-from engine.poh_data import POH_GROUND_ROLL_FT, estimate_ground_roll
+from engine.poh_data import (
+    POH_GROUND_ROLL_FT, estimate_ground_roll,
+    POH_VBG_KIAS, vbg_poh_kias,
+    POH_CLIMB, vy_poh_kias, roc_poh_fpm,
+)
 from analysis.turnback_simulator import (
     build_turnback_envelope, simulate_turnback, optimize_turnback, best_glide_kias,
     simulate_straight_ahead, find_straight_ahead_max_altitude,
@@ -181,30 +185,37 @@ def run_turnback_page():
     vs_clean_est = math.sqrt(295.0 * weight / (config.wing_area * config.Clmax))
     vx_est = int(vs_clean_est * 1.1)   # Vx ≈ 1.1 × Vs_clean
     vy_est = int(vs_clean_est * 1.3)   # Vy ≈ 1.3 × Vs_clean
+    _vy_poh = vy_poh_kias(ac_key[0])
+    _have_vy_poh = _vy_poh is not None
 
     climb_speed_options = {
-        'vx':     f'Vx — best angle ({vx_est} KIAS)',
-        'vy':     f'Vy — best rate ({vy_est} KIAS)',
+        'vx':     f'Vx — best angle ({vx_est} KIAS, est)',
+        'vy':     f'Vy — best rate ({vy_est} KIAS, est)',
+        'vy_poh': f'Vy — POH ({int(_vy_poh)} KIAS)' if _have_vy_poh else 'Vy — POH (n/a)',
         'manual': 'Manual',
     }
+    # Default to POH Vy when available, else estimated Vy.
+    _default_climb_idx = 2 if _have_vy_poh else 1
     climb_speed_mode = st.sidebar.radio(
         "Climb-out speed",
         list(climb_speed_options.keys()),
         format_func=lambda x: climb_speed_options[x],
-        index=1,
+        index=_default_climb_idx,
         help="Speed at moment of engine failure. "
              "Vx: best angle of climb (~1.1 × Vs). "
-             "Vy: best rate of climb (~1.3 × Vs).",
+             "Vy: best rate of climb (~1.3 × Vs estimate, or POH value when available).",
     )
 
     if climb_speed_mode == 'vx':
         airspeed = vx_est
     elif climb_speed_mode == 'vy':
         airspeed = vy_est
+    elif climb_speed_mode == 'vy_poh':
+        airspeed = int(round(_vy_poh)) if _have_vy_poh else vy_est
     else:
         airspeed = st.sidebar.number_input(
             "Airspeed at failure (KIAS)", min_value=40, max_value=300,
-            value=vy_est, step=5,
+            value=int(round(_vy_poh)) if _have_vy_poh else vy_est, step=5,
         )
 
     st.sidebar.caption(
@@ -300,24 +311,45 @@ def run_turnback_page():
                 f"{vbg_turn:.0f} KIAS"
             )
         with st.sidebar.expander("Advanced — POH Vbg overrides", expanded=False):
-            st.caption("Override the aerodynamic computation with POH best-glide values. *(0 = auto)*")
+            # POH-derived defaults (scaled to current weight by sqrt(W/MTOW)).
+            _vbg_clean_poh = vbg_poh_kias(ac_key[0], config, weight, 'clean')
+            _vbg_gear_poh = vbg_poh_kias(ac_key[0], config, weight, 'geardown')
+            _vbg_land_poh = vbg_poh_kias(ac_key[0], config, weight, 'landing')
+            if _vbg_clean_poh is not None:
+                st.caption(
+                    f"**POH Vbg @ {weight:,} lb** (scaled from MTOW): "
+                    f"clean **{_vbg_clean_poh:.0f}** · "
+                    f"gear-down **{_vbg_gear_poh:.0f}** · "
+                    f"landing **{_vbg_land_poh:.0f}** KIAS.  "
+                    "Defaults below are pre-filled from these.  "
+                    "*(0 = revert to aerodynamic computation)*"
+                )
+                _def_clean = int(round(_vbg_clean_poh))
+                _def_gear = int(round(_vbg_gear_poh))
+                _def_land = int(round(_vbg_land_poh))
+            else:
+                st.caption("Override the aerodynamic computation with POH best-glide values. *(0 = auto)*")
+                _def_clean = _def_gear = _def_land = 0
             vbg_clean_kias = st.number_input(
                 "Vbg clean (gear up, flaps up)",
-                min_value=0, max_value=300, value=0, step=1,
+                min_value=0, max_value=300, value=_def_clean, step=1,
                 help="POH best-glide speed for clean configuration "
                      "(gear up, flaps up). 0 = use aerodynamic computation.",
+                key=f"vbg_clean_{ac_key[0]}",
             )
             vbg_geardown_kias = st.number_input(
                 "Vbg gear down (gear ↓, flaps up)",
-                min_value=0, max_value=300, value=0, step=1,
+                min_value=0, max_value=300, value=_def_gear, step=1,
                 help="POH best-glide speed with gear extended, flaps up. "
                      "0 = use aerodynamic computation.",
+                key=f"vbg_gear_{ac_key[0]}",
             )
             vbg_landing_kias = st.number_input(
                 "Vbg landing (gear ↓, flaps ↓)",
-                min_value=0, max_value=300, value=0, step=1,
+                min_value=0, max_value=300, value=_def_land, step=1,
                 help="POH best-glide speed with gear and flaps extended "
                      "(landing configuration). 0 = use aerodynamic computation.",
+                key=f"vbg_land_{ac_key[0]}",
             )
 
     # Flap setting block has moved up under "Aircraft & Configuration"
@@ -1186,6 +1218,46 @@ def run_turnback_page():
                 "zone.  Engine power also drops with σ for normally-aspirated airframes, "
                 "which is reflected in the per-altitude thrust deck used by the climb model."
             )
+
+            # POH ROC scaled to weight + density (independent cross-check vs the sim)
+            try:
+                _roc_poh_da = roc_poh_fpm(ac_key[0], config, weight, field_elev, isa_dev)
+                _roc_poh_sl = roc_poh_fpm(ac_key[0], config, weight, 0, 0)
+                if _roc_poh_da is not None and _roc_poh_sl is not None:
+                    _row = POH_CLIMB.get(ac_key[0])
+                    _vy_p = int(_row[0]) if _row else 0
+                    _roc_mtow_sl = int(_row[1]) if _row else 0
+                    _dens_exp = float(_row[2]) if _row else 1.0
+                    st.markdown("---")
+                    st.markdown(
+                        f"**POH cross-check** — Vy = **{_vy_p} KIAS**, "
+                        f"published ROC at MTOW/SL/ISA = **{_roc_mtow_sl:,} fpm** "
+                        f"(density model: {'turbo / turboprop (σ^0.5)' if _dens_exp < 1.0 else 'normally-aspirated (σ^1.0)'})"
+                    )
+                    poh_cols = st.columns(2)
+                    poh_cols[0].metric(
+                        f"POH ROC @ {weight:,} lb, sea level",
+                        f"{_roc_poh_sl:,.0f} fpm",
+                        f"weight × {(_row[1]/_roc_poh_sl):.2f} factor" if _roc_poh_sl > 0 else "",
+                        delta_color="off",
+                        help="POH MTOW ROC scaled by (MTOW / actual weight).",
+                    )
+                    poh_cols[1].metric(
+                        f"POH ROC @ {weight:,} lb, this DA",
+                        f"{_roc_poh_da:,.0f} fpm",
+                        f"{_roc_poh_da - _roc_poh_sl:+,.0f} fpm vs SL  ·  "
+                        f"−{(1 - _roc_poh_da/_roc_poh_sl)*100:.0f}% density loss" if _roc_poh_sl > 0 else "",
+                        delta_color="off",
+                        help="POH ROC × (MTOW/W) × σ^n where n = 1.0 (NA) or 0.5 (turbo).",
+                    )
+                    st.caption(
+                        "POH cross-check is independent of the simulator's "
+                        "thrust-deck climb model.  Large disagreements between "
+                        "the two are a flag to verify the airframe drag polar "
+                        "or thrust-deck assumption."
+                    )
+            except Exception:
+                pass
     except Exception:
         pass
 

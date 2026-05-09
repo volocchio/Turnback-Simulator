@@ -181,3 +181,196 @@ def estimate_ground_roll(
         aircraft_key=aircraft_key,
         cited=True,
     )
+
+
+# ---------------------------------------------------------------------------
+#  POH Best-Glide Speed table (KIAS at MTOW, clean configuration)
+# ---------------------------------------------------------------------------
+#
+# Vbg in the POH is published at MTOW and is essentially independent of
+# density altitude (it's an IAS).  At lighter weights, the AERODYNAMIC
+# best-glide speed scales as sqrt(W/MTOW) (same CL, lower lift required
+# → lower speed).  We expose three configurations matching the existing
+# sidebar overrides:
+#
+#   clean      — gear up, flaps up
+#   geardown   — gear down, flaps up (retract aircraft only)
+#   landing    — gear down, flaps full
+#
+# For fixed-gear aircraft, geardown == clean.  Landing-config Vbg is
+# typically ~10–15% below clean (more drag → lower L/Dmax airspeed).
+# Where the POH does not publish a landing-config Vbg, we estimate
+# 0.88 × clean as a conservative placeholder.
+#
+# Sources: aircraft POHs and well-known third-party performance summaries.
+
+POH_VBG_KIAS = {
+    # key       :  (clean, geardown, landing)
+    'J3Cub':      ( 60,  60,  55),
+    'Husky':      ( 65,  65,  60),
+    'RV-6A':      ( 87,  87,  78),
+    'RV-7A':      ( 91,  91,  82),
+    'RV-8':       ( 91,  91,  82),
+    'RV-10':      (100, 100,  90),
+    'RV-12':      ( 70,  70,  65),
+    'RV-14A':     ( 95,  95,  85),
+    'C172S':      ( 68,  68,  60),
+    'C150':       ( 60,  60,  55),
+    'C152':       ( 60,  60,  55),
+    'PA-38':      ( 70,  70,  62),   # Tomahawk
+    'DA20':       ( 73,  73,  65),
+    'C182T':      ( 76,  76,  68),
+    'C182RG':     ( 70,  60,  60),   # retractable: gear-down adds drag
+    'SR22':       ( 88,  88,  79),
+    'SR22T':      ( 88,  88,  79),
+    'TTx':        ( 95,  90,  82),
+    'A36':        (110,  95,  90),   # retract
+    'PA28':       ( 73,  73,  65),
+    'M20V':       (105,  90,  85),   # retract
+    'Mirage':     ( 88,  78,  72),   # PA-46 piston, retract
+    'TBM850':     (124, 110,  98),
+    'TBM910':     (124, 110,  98),
+    'TBM960':     (124, 110,  98),
+    'Meridian':   (105,  92,  85),
+    'M600':       (110,  98,  90),
+    'M700':       (115, 100,  92),
+    'PC12':       (130, 115, 105),
+    'C208':       ( 95,  95,  82),   # fixed gear
+    'C208B':      ( 95,  95,  82),
+    'C208EX':     ( 95,  95,  82),
+    'Kodiak100':  ( 88,  88,  78),
+    'Kodiak900':  ( 92,  92,  82),
+    'Denali':     (105,  92,  85),   # target spec
+    'E1000':      (118, 105,  95),
+}
+
+
+def vbg_poh_kias(
+    aircraft_key: str,
+    config_or_mtow,
+    weight_lb: float,
+    configuration: str = 'clean',
+) -> float | None:
+    """Return POH best-glide speed adjusted for weight, or None if not in table.
+
+    Args:
+        aircraft_key: model key (e.g. 'C172S')
+        config_or_mtow: AircraftConfig or float MTOW
+        weight_lb: actual weight
+        configuration: 'clean' | 'geardown' | 'landing'
+
+    Returns:
+        Vbg in KIAS, scaled by sqrt(W/MTOW) from the POH MTOW value.
+    """
+    row = POH_VBG_KIAS.get(aircraft_key)
+    if row is None:
+        return None
+    idx = {'clean': 0, 'geardown': 1, 'landing': 2}.get(configuration, 0)
+    vbg_mtow = float(row[idx])
+    mtow = float(getattr(config_or_mtow, 'MTOW', config_or_mtow))
+    if mtow <= 0:
+        return vbg_mtow
+    # Vbg scales as sqrt(W/MTOW) at constant CL_opt.
+    import math as _m
+    return vbg_mtow * _m.sqrt(max(0.0, float(weight_lb) / mtow))
+
+
+# ---------------------------------------------------------------------------
+#  POH Climb performance (Vy and rate of climb at MTOW, sea level, ISA)
+# ---------------------------------------------------------------------------
+#
+# Vy (best-rate climb speed) is published at MTOW and scales weakly with
+# weight; we treat it as constant at the POH value (engineering convention
+# for light aircraft).
+#
+# Rate of climb scales with:
+#   ROC(W, ρ) ≈ ROC_MTOW_SL × (MTOW/W) × σ
+# for normally-aspirated airframes (excess power ~ thrust×velocity, both
+# of which drop with σ; weight scaling is conservative — the actual ROC
+# curve is close to (MTOW/W) but with some non-linearity).  Turbocharged
+# / turboprop airframes hold thrust to higher altitude — for those we
+# use σ^0.5 instead of σ as a less-aggressive density penalty.
+#
+# Sources: aircraft POHs and manufacturer spec sheets.
+
+# (Vy_KIAS, ROC_fpm_at_MTOW_SL_ISA, density_exponent)
+#   density_exponent = 1.0 → normally-aspirated (full σ penalty)
+#   density_exponent = 0.5 → turbocharged / turboprop (sqrt σ)
+POH_CLIMB = {
+    'J3Cub':      (  55,  450, 1.0),
+    'Husky':      (  70, 1500, 1.0),
+    'RV-6A':      (  87, 1700, 1.0),
+    'RV-7A':      (  90, 1800, 1.0),
+    'RV-8':       (  90, 1800, 1.0),
+    'RV-10':      (  98, 1500, 1.0),
+    'RV-12':      (  72,  900, 1.0),
+    'RV-14A':     (  95, 1500, 1.0),
+    'C172S':      (  74,  730, 1.0),
+    'C150':       (  68,  670, 1.0),
+    'C152':       (  67,  715, 1.0),
+    'PA-38':      (  70,  700, 1.0),
+    'DA20':       (  68,  890, 1.0),
+    'C182T':      (  80,  924, 1.0),
+    'C182RG':     (  88, 1140, 1.0),
+    'SR22':       (  96, 1270, 1.0),
+    'SR22T':      (  96, 1203, 0.5),  # turbocharged
+    'TTx':        ( 100, 1400, 0.5),  # turbocharged
+    'A36':        ( 100, 1230, 1.0),
+    'PA28':       (  76,  667, 1.0),
+    'M20V':       ( 105, 1240, 0.5),  # turbocharged
+    'Mirage':     ( 110, 1500, 0.5),  # turbocharged
+    'TBM850':     ( 124, 2380, 0.5),  # turboprop
+    'TBM910':     ( 124, 2380, 0.5),
+    'TBM960':     ( 124, 2380, 0.5),
+    'Meridian':   ( 110, 1500, 0.5),
+    'M600':       ( 120, 2000, 0.5),
+    'M700':       ( 125, 2048, 0.5),
+    'PC12':       ( 120, 1920, 0.5),
+    'C208':       (  95,  975, 0.5),
+    'C208B':      (  95,  975, 0.5),
+    'C208EX':     ( 104, 1234, 0.5),
+    'Kodiak100':  (  85, 1374, 0.5),
+    'Kodiak900':  (  91, 1670, 0.5),
+    'Denali':     ( 124, 2500, 0.5),
+    'E1000':      ( 130, 4000, 0.5),
+}
+
+
+def vy_poh_kias(aircraft_key: str) -> float | None:
+    """Return POH Vy (best-rate climb speed) in KIAS, or None if not in table."""
+    row = POH_CLIMB.get(aircraft_key)
+    return float(row[0]) if row else None
+
+
+def roc_poh_fpm(
+    aircraft_key: str,
+    config_or_mtow,
+    weight_lb: float,
+    field_elev_ft: float = 0.0,
+    isa_dev_c: float = 0.0,
+) -> float | None:
+    """Return POH ROC (fpm) scaled to actual weight and density altitude.
+
+    Scaling:  ROC(W, ρ) = ROC_MTOW_SL × (MTOW/W) × σ^n
+    where n = 1.0 for normally-aspirated, 0.5 for turbo/turboprop.
+
+    Args:
+        aircraft_key: model key
+        config_or_mtow: AircraftConfig or float MTOW
+        weight_lb: actual weight
+        field_elev_ft: field elevation MSL
+        isa_dev_c: ISA deviation in °C
+
+    Returns:
+        ROC in fpm at the requested conditions, or None if not in table.
+    """
+    row = POH_CLIMB.get(aircraft_key)
+    if row is None:
+        return None
+    _, roc_mtow_sl, density_exp = row
+    mtow = float(getattr(config_or_mtow, 'MTOW', config_or_mtow))
+    weight_factor = (mtow / float(weight_lb)) if weight_lb > 0 else 1.0
+    _, _, sigma, _, _, _ = atmos(float(field_elev_ft), float(isa_dev_c))
+    density_factor = max(sigma, 0.01) ** float(density_exp)
+    return float(roc_mtow_sl) * weight_factor * density_factor
+
