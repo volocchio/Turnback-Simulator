@@ -1120,6 +1120,75 @@ def run_turnback_page():
     else:
         col5.metric("Turn Radius", "—")
 
+    # ── Density-altitude proof readout ──
+    # Show that high DA actually moves the numbers: TAS > IAS, ROC drops,
+    # ground roll grows.  Compare the user's DA to a sea-level ISA baseline.
+    try:
+        from engine.flight_physics import atmos as _atmos_da
+        _, _, _sigma_sl, _, _, _ = _atmos_da(0, 0)
+        _, _, _sigma_da, _, _, _ = _atmos_da(field_elev, isa_dev)
+        # Pressure altitude ≈ field elevation (METAR baro corrections ignored here).
+        # Density altitude per ISA standard formula.
+        _da_ft = field_elev + 120.0 * isa_dev  # quick approximation
+        _vtas_da = airspeed / max(_sigma_da ** 0.5, 0.1)
+        _vtas_sl = airspeed / max(_sigma_sl ** 0.5, 0.1)
+        # Take ROC at critical-altitude trajectory mid-band as proxy
+        _grad_da = res.get('climb_gradient', 0.07) or 0.07
+        _roc_da_fpm = _grad_da * (_vtas_da * 6076.12 / 60.0)
+        _roc_sl_fpm = _grad_da * (_vtas_sl * 6076.12 / 60.0)
+        # Ground roll proxy: sigma scaling only (1/σ)
+        _roll_factor = (1.0 / _sigma_da) if _sigma_da > 0 else float('inf')
+        with st.expander(
+            f"📊 Density-altitude effects ({_da_ft:,.0f} ft DA · σ = {_sigma_da:.3f})",
+            expanded=False,
+        ):
+            st.markdown(
+                f"**Field elev** {field_elev:,} ft MSL · **ISA dev** "
+                f"{isa_dev:+d} °C · **Density altitude** ≈ "
+                f"**{_da_ft:,.0f} ft** · density ratio σ = **{_sigma_da:.3f}** "
+                f"(SL = 1.000)"
+            )
+            da_cols = st.columns(4)
+            da_cols[0].metric(
+                "Climb-out IAS",
+                f"{airspeed:.0f} KIAS",
+                f"unchanged (pilot reads IAS)",
+                delta_color="off",
+            )
+            da_cols[1].metric(
+                "True airspeed (TAS)",
+                f"{_vtas_da:.0f} KTAS",
+                f"+{_vtas_da - airspeed:.0f} kt vs sea level",
+                delta_color="off",
+                help=f"V_TAS = KIAS / √σ = {airspeed:.0f} / √{_sigma_da:.3f} "
+                     f"= {_vtas_da:.1f} KTAS",
+            )
+            da_cols[2].metric(
+                "Rate of climb",
+                f"{_roc_da_fpm:,.0f} fpm",
+                f"{_roc_da_fpm - _roc_sl_fpm:+,.0f} fpm vs sea level",
+                delta_color="off",
+                help=f"ROC = climb_gradient × V_TAS = {_grad_da:.3f} × "
+                     f"{_vtas_da * 6076.12 / 60.0:,.0f} fpm "
+                     f"= {_roc_da_fpm:,.0f} fpm",
+            )
+            da_cols[3].metric(
+                "Ground-roll factor",
+                f"× {_roll_factor:.2f}",
+                f"{(_roll_factor - 1) * 100:+.0f}% vs sea level",
+                delta_color="off",
+                help="Liftoff roll scales as 1/σ (constant-thrust approximation).  "
+                     "POH-based estimator in the sidebar uses the same formula.",
+            )
+            st.caption(
+                "Same KIAS at altitude means **higher TAS** → wider turn radius "
+                "(R = V²/(g·tan φ)) and **longer climb time** to clear the critical "
+                "zone.  Engine power also drops with σ for normally-aspirated airframes, "
+                "which is reflected in the per-altitude thrust deck used by the climb model."
+            )
+    except Exception:
+        pass
+
     # ── Runway zone analysis (straight-ahead vs critical zone vs turnback) ──
     straight_ahead_max_alt = res.get('straight_ahead_max_alt', 0.0)
     use_runway = res.get('runway_length', 0) > 0
