@@ -269,29 +269,34 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     css = """
     <style>
       @page { size: letter; margin: 0.5in; }
-      body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #111; max-width: 7.5in; margin: 0 auto; }
+      body { font-family: Helvetica, Arial, sans-serif; color: #111; }
       h1 { font-size: 18pt; margin: 0 0 4px 0; border-bottom: 3px solid #0a3a5c; padding-bottom: 4px; }
-      h2 { font-size: 11pt; margin: 12px 0 4px 0; color: #0a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+      h2 { font-size: 11pt; margin: 12px 0 4px 0; color: #0a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 2px; -pdf-keep-with-next: true; }
+      h3 { font-size: 10pt; margin: 6px 0 3px 0; color: #0a3a5c; }
       .header-meta { color: #666; font-size: 9pt; margin-bottom: 8px; }
       table { width: 100%; border-collapse: collapse; font-size: 10pt; margin-bottom: 6px; }
       td, th { padding: 3px 6px; text-align: left; vertical-align: top; }
-      td.label { font-weight: 600; color: #444; width: 40%; }
+      td.label { font-weight: bold; color: #444; width: 40%; }
       td.value { color: #000; }
-      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+      /* xhtml2pdf doesn't support CSS grid — use a 2-column table wrapper */
+      table.cols2 { width: 100%; border: none; }
+      table.cols2 > tbody > tr > td { width: 50%; vertical-align: top; padding: 0 6px; border: none; }
       .big { background: #f3f7fc; border-left: 4px solid #0a3a5c; padding: 8px 12px; margin: 8px 0; }
-      .big .label { font-size: 9pt; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
-      .big .number { font-size: 24pt; font-weight: 700; color: #0a3a5c; line-height: 1.1; }
+      .big .label { font-size: 9pt; color: #555; font-weight: bold; }
+      .big .number { font-size: 22pt; font-weight: bold; color: #0a3a5c; }
       .big .sub { font-size: 9pt; color: #666; }
+      .hero { background: #0a3a5c; color: #ffffff; padding: 10px 14px; margin: 4px 0 10px 0; }
+      .hero .htitle { font-size: 11pt; font-weight: bold; }
+      .hero .hsub { font-size: 9pt; color: #cfe1f0; }
+      .hero .hkey { font-size: 24pt; font-weight: bold; margin-top: 4px; }
+      .hero .hkeysub { font-size: 9pt; color: #cfe1f0; }
       .warn { background: #fff4e5; border-left: 4px solid #d84315; padding: 6px 10px; font-size: 10pt; }
       .ok { background: #e8f5e9; border-left: 4px solid #2e7d32; padding: 6px 10px; font-size: 10pt; }
       .muted { color: #888; font-style: italic; font-size: 9pt; }
-      table.wp { width: auto; }
+      table.wp { width: 50%; }
       table.wp th, table.wp td { border: 1px solid #ddd; padding: 2px 8px; }
       .footer { margin-top: 12px; font-size: 8pt; color: #777; border-top: 1px solid #ddd; padding-top: 6px; }
-      @media print {
-        body { font-size: 10pt; }
-        .no-print { display: none; }
-      }
+      .pgbreak { -pdf-keep-in-frame-mode: shrink; }
     </style>
     """
 
@@ -322,8 +327,15 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     <h1>Takeoff Data Card — Turnback Analysis</h1>
     <div class='header-meta'>Generated {e(timestamp)} · Turnback Simulator (turnback.voloaltro.tech)</div>
 
+    <div class='hero'>
+      <div class='htitle'>{e(ac_label)} · {e(airport)} · RWY {e(runway)}</div>
+      <div class='hsub'>Weight {_fmt_int(weight, ' lb')} · Field {_fmt_int(field_elev, ' ft MSL')} · ISA{_fmt_dec(isa_dev, 0, '°C') if isa_dev >= 0 else _fmt_dec(isa_dev, 0, '°C')} · Wind {_fmt_int(wind_speed, ' kt')} from {_fmt_int(wind_from_true if wind_from_true is not None else wind_from_deg, '°')}</div>
+      <div class='hkey'>{_fmt_int(crit_recommend, ' ft AGL')}</div>
+      <div class='hkeysub'>Recommended turnback minimum (× {safety_margin_factor:.2f} safety factor) · {e(rec_dir)} turn · {_fmt_int(crit_recommend_msl, ' ft MSL')} on the altimeter</div>
+    </div>
+
     <h2>Aircraft &amp; Conditions</h2>
-    <div class='grid2'>
+    <table class='cols2'><tr><td>
       <table>
         <tr><td class='label'>Aircraft</td><td class='value'>{e(ac_label)}</td></tr>
         <tr><td class='label'>Gross weight</td><td class='value'>{_fmt_int(weight, ' lb')} (MTOW {_fmt_int(mtow, ' lb')})</td></tr>
@@ -344,7 +356,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
         <tr><td class='label'>Turnback speed mode</td><td class='value'>{e(speed_mode_label)}</td></tr>
         <tr><td class='label'>Reaction time</td><td class='value'>{_fmt_dec(reaction, 1, ' sec')}</td></tr>
       </table>
-    </div>
+    </td></tr></table>
 
     <h2>Winds Aloft</h2>
     {wind_table}
@@ -358,20 +370,24 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     </table>
 
     <h2>Turnback — Critical Decision Numbers</h2>
-    <div class='grid2'>
-      <div class='big'>
-        <div class='label'>Recommended minimum altitude</div>
-        <div class='number'>{_fmt_int(crit_recommend, ' ft AGL')}</div>
-        <div class='sub'><strong>{_fmt_int(crit_recommend_msl, ' ft MSL')}</strong> on your altimeter.<br>
-        Calc {_fmt_int(crit_min)} ft × <strong>{safety_margin_factor:.2f} safety factor</strong>.<br>
-        Below this altitude on takeoff: <strong>land straight ahead.</strong></div>
-      </div>
-      <div class='big'>
-        <div class='label'>Recommended turn direction</div>
-        <div class='number'>{e(rec_dir)}</div>
-        <div class='sub'>{e(rec_rationale)}</div>
-      </div>
-    </div>
+    <table class='cols2'><tr>
+      <td>
+        <div class='big'>
+          <div class='label'>Recommended minimum altitude</div>
+          <div class='number'>{_fmt_int(crit_recommend, ' ft AGL')}</div>
+          <div class='sub'><strong>{_fmt_int(crit_recommend_msl, ' ft MSL')}</strong> on your altimeter.<br/>
+          Calc {_fmt_int(crit_min)} ft × <strong>{safety_margin_factor:.2f} safety factor</strong>.<br/>
+          Below this altitude on takeoff: <strong>land straight ahead.</strong></div>
+        </div>
+      </td>
+      <td>
+        <div class='big'>
+          <div class='label'>Recommended turn direction</div>
+          <div class='number'>{e(rec_dir)}</div>
+          <div class='sub'>{e(rec_rationale)}</div>
+        </div>
+      </td>
+    </tr></table>
 
     <table>
       <tr><td class='label'>Critical altitude — turn LEFT</td><td class='value'>{_fmt_int(crit_left, ' ft AGL')} <span class='muted'>(<strong>{_fmt_int(crit_left_msl, ' ft MSL')}</strong>)</span></td></tr>
@@ -408,7 +424,7 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     </ol>
 
     <div class='footer'>
-      Sources: Rogers (Estimating Turnback Altitude), Jett (USNA), FAA AC 61-83K para A.114, EAA Sport Aviation.<br>
+      Sources: Rogers (USNA, <i>Looking Back at the Turn-Back Maneuver</i>), Jett (USAFA, DTIC ADA122862), FAA AC 61-83K para A.114, FAA AFH Ch.6, EAA Sport Aviation May 2026.<br/>
       <strong>This card is a planning tool — not a substitute for the aircraft POH or pilot judgment.</strong>
     </div>
     """
@@ -432,8 +448,8 @@ def build_takeoff_data_card_pdf(res: dict, crit_result: dict | None,
 
     html = build_takeoff_data_card(res, crit_result, safety_margin_factor)
 
-    # xhtml2pdf has a CSS subset — strip the heart/emoji-leaning unicode
-    # that pisa's default fonts can't render, and remove unsupported rules.
+    # xhtml2pdf has a CSS subset and a limited Unicode font.  Map characters
+    # the default font can't render to ASCII equivalents.
     safe_html = (
         html
         .replace("⚠", "[!]")
@@ -442,6 +458,19 @@ def build_takeoff_data_card_pdf(res: dict, crit_result: dict | None,
         .replace("→", "->")
         .replace("·", "-")
         .replace("×", "x")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("≈", "~")
+        .replace("σ", "sigma")
+        .replace("γ", "gamma")
+        .replace("φ", "phi")
+        .replace("ρ", "rho")
+        .replace("²", "^2")
+        .replace("√", "sqrt")
+        .replace("Δ", "delta ")
+        .replace("\u00a0", " ")
+        .replace("\u2009", " ")
+        .replace("\u200b", "")
     )
 
     buf = io.BytesIO()

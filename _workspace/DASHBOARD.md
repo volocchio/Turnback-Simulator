@@ -1,8 +1,8 @@
 # Turnback Simulator — Dashboard
 
-**Heat:** 🔥 Active (weekly touches)
-**Last updated:** May 8, 2026
-**Live:** https://turnback.voloaltro.tech
+**Heat:** � Active (weekly touches)
+**Last updated:** May 9, 2026
+**Live:** https://turnback.voloaltro.tech (HEAD `7d1f098`)
 **Repo:** https://github.com/volocchio/Turnback-Simulator
 
 ---
@@ -24,12 +24,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - ✅ Takeoff Data Card output ([analysis/data_card.py](../analysis/data_card.py))
 
 ## 4. Next milestone — 🎯
-**Pilot-facing UX: margins, education, bank-angle penalty visualization**
-- Conservative safety margins (1.25–1.5×) shown explicitly: "Calculated X ft / Recommended Y ft"
-- Bank-angle sensitivity panel — make the stall-speed and sink-rate penalty obvious for 30°/40°/45°
-- Reaction-time sensitivity (3 vs 5 vs 10 sec)
-- Flap-strategy visual tradeoff
-- Inline education on *why* numbers come out as they do (replace folklore with intuition, not just numbers)
+**Charlie review of Phase 2 + PDF export polish.**  Phase 2 (safety/education sweep) shipped May 9 — sensitivity charts, safety-margin visualization, inline academic references, full POH coverage (ground-roll, Vbg, Vy, ROC, stall, landing-roll across all 36 single-engine models).  Next pilot-facing item is the PDF data-card cleanup; next physics item is service-ceiling/ROC sanity overlay (already partially shipped via P4 warning tiers).
 
 ## 5. Backlog (from Charlie's brief)
 **Phase 1 — Output (mostly done)**
@@ -37,11 +32,19 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 - [ ] PDF export polish
 - [x] Last abort point, turnback altitude, threshold crossing, turn direction, straight-ahead max
 
-**Phase 2 — Safety & Education (CURRENT)**
-- [ ] Safety margin visualization + text
-- [ ] Bank-angle sensitivity graph
-- [ ] Reaction-time sensitivity
-- [ ] Academic reference links inline (Rogers, Jett, AC 61-83K, EAA Sport Aviation May 2026)
+**Phase 2 — Safety & Education (✅ SHIPPED May 9, commits `1154004` + `7d1f098`)**
+- [x] Safety margin visualization + text — stacked bar (calculated minimum + hatched buffer + recommended-altitude annotation), with conditional caption tying to the slider
+- [x] Bank-angle sensitivity graph — sweep 25°→55°, LEFT/RIGHT critical alts on primary axis + Vs-in-turn overlay on secondary, current selection starred, Rogers/Jett refs in callout
+- [x] Reaction-time sensitivity — sweep 0/2/3/5/7/10 sec, area-fill chart, ft/sec cost callout, AC 61-83K ref
+- [x] Academic reference links inline (Rogers USNA PDF, Jett DTIC ADA122862, AC 61-83K, AFH, PHAK, EAA Sport Aviation)
+
+**Phase 2.5 — POH coverage sweep (✅ SHIPPED May 9)**
+- [x] POH ground-roll table + scaling for all 36 single-engine models (commit `ca5faba`)
+- [x] POH Vbg (clean/gear-down/landing) + helper, sidebar override pre-fill (commit `e06a3fe`)
+- [x] POH Vy + ROC table + scaling, climb-speed-radio default to POH Vy where available, DA-expander cross-check vs sim
+- [x] POH stall speeds (Vs/Vs0) — sidebar defaults, caption shows aerodynamic estimate alongside (commit `c24613e`)
+- [x] Service-ceiling proximity warning (40/60/80% tiers) inside DA expander
+- [x] Landing-roll POH table + cross-check vs runway length (>60% utilization triggers warning)
 
 **Phase 3 — Future**
 - [ ] Google Earth / off-field landing overlay between last-abort and turnback-altitude zones
