@@ -873,8 +873,8 @@ def render_landing_map_section(
 
         if crit_row:
             for side, color, label in (
-                ('left',  '#facc15', 'Turnback LEFT (critical alt)'),
-                ('right', '#fb923c', 'Turnback RIGHT (critical alt)'),
+                ('left',  '#16a34a', 'Turnback LEFT (critical alt)'),
+                ('right', '#22c55e', 'Turnback RIGHT (critical alt)'),
             ):
                 sub = crit_row.get(side) or {}
                 if sub.get('success') and sub.get('trajectory'):
