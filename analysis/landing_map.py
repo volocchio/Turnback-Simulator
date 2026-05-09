@@ -620,6 +620,141 @@ def build_satellite_map(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# 3-D satellite map (pydeck) — Charlie #G2
+# ──────────────────────────────────────────────────────────────────────
+
+def build_3d_satellite_map(
+    airport: Airport,
+    runway_heading_deg: float,
+    envelope_tracks_3d=None,
+    airport_perimeter=None,
+    altitude_exaggeration: float = 5.0,
+    pitch_deg: float = 55.0,
+    bearing_deg: float = 0.0,
+    glide_radius_high_m: float = 0.0,
+):
+    """Return a ``pydeck.Deck`` rendering the turnback ground tracks
+    in 3-D over satellite imagery (Esri World Imagery, no token needed).
+
+    Args:
+        envelope_tracks_3d: list of dicts with keys ``label``, ``color``
+            (R,G,B int 0-255), and ``coords`` = list of ``[lon, lat, alt_m]``.
+        altitude_exaggeration: multiplier applied to altitude in meters
+            so the climb/turnback profile is visible at airport scale
+            (default 5×).  Shown in the legend.
+        pitch_deg / bearing_deg: initial camera angles.
+    """
+    import pydeck as pdk
+
+    layers = []
+
+    # Esri World Imagery basemap — free, no API key.
+    layers.append(pdk.Layer(
+        "TileLayer",
+        data="https://server.arcgisonline.com/ArcGIS/rest/services/"
+             "World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        min_zoom=0,
+        max_zoom=19,
+        tile_size=256,
+        opacity=1.0,
+    ))
+
+    # Airport perimeter as a green polygon at field elevation.
+    if airport_perimeter:
+        peri_coords = [[lon, lat] for lat, lon in airport_perimeter]
+        if peri_coords and peri_coords[0] != peri_coords[-1]:
+            peri_coords.append(peri_coords[0])
+        layers.append(pdk.Layer(
+            "PolygonLayer",
+            data=[{"polygon": peri_coords}],
+            get_polygon="polygon",
+            get_fill_color=[34, 197, 94, 40],
+            get_line_color=[22, 163, 74, 220],
+            line_width_min_pixels=2,
+            stroked=True,
+            filled=True,
+            pickable=False,
+        ))
+
+    # Runway centerline arrow (1.5 nm projection).
+    end_lat, end_lon = offset_latlon(
+        airport.lat, airport.lon, runway_heading_deg, 2780.0  # ~1.5 nm
+    )
+    layers.append(pdk.Layer(
+        "PathLayer",
+        data=[{"path": [
+            [airport.lon, airport.lat, 0.0],
+            [end_lon, end_lat, 0.0],
+        ], "color": [250, 204, 21]}],
+        get_path="path",
+        get_color="color",
+        get_width=4,
+        width_min_pixels=2,
+        pickable=False,
+    ))
+
+    # Turnback / straight-ahead 3-D paths.
+    if envelope_tracks_3d:
+        path_records = []
+        for tr in envelope_tracks_3d:
+            coords = tr.get("coords") or []
+            if len(coords) < 2:
+                continue
+            # Apply altitude exaggeration to z (third element).
+            scaled = [
+                [c[0], c[1], (c[2] if len(c) > 2 else 0.0) * altitude_exaggeration]
+                for c in coords
+            ]
+            path_records.append({
+                "path": scaled,
+                "color": list(tr.get("color", (34, 197, 94))),
+                "name": tr.get("label", ""),
+            })
+        if path_records:
+            layers.append(pdk.Layer(
+                "PathLayer",
+                data=path_records,
+                get_path="path",
+                get_color="color",
+                get_width=5,
+                width_min_pixels=3,
+                pickable=True,
+            ))
+
+    # Airport reference point as a vertical column to anchor the eye.
+    layers.append(pdk.Layer(
+        "ColumnLayer",
+        data=[{"position": [airport.lon, airport.lat], "value": 50.0}],
+        get_position="position",
+        get_elevation="value",
+        elevation_scale=1.0,
+        radius=15,
+        get_fill_color=[59, 130, 246, 220],
+        pickable=False,
+    ))
+
+    # Camera: zoom chosen so glide footprint is visible.
+    radius_m = max(glide_radius_high_m, 800.0)
+    # Empirical: at 60° latitude-independent zoom, ~radius_m/2 fits view.
+    zoom = max(11.5, min(15.5, 16.0 - math.log2(max(radius_m / 800.0, 1.0))))
+
+    view_state = pdk.ViewState(
+        latitude=airport.lat,
+        longitude=airport.lon,
+        zoom=zoom,
+        pitch=pitch_deg,
+        bearing=bearing_deg,
+    )
+
+    return pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style=None,  # disable default Mapbox basemap; TileLayer above wins
+        tooltip={"text": "{name}"},
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Streamlit section
 # ──────────────────────────────────────────────────────────────────────
 
@@ -830,8 +965,10 @@ def render_landing_map_section(
 
     # ── G4: build heart-shape ground-track polylines from envelope ──
     envelope_tracks = None
+    envelope_tracks_3d = None  # G2: parallel 3-D structure for pydeck
     if envelope:
         envelope_tracks = []
+        envelope_tracks_3d = []
         # Pick the envelope row at (or just above) critical_alt for each side
         target_alt = max(critical_alt, max(critical_alt_low_ft, critical_alt_high_ft))
         rwy_hdg = runway_heading
@@ -854,6 +991,27 @@ def render_landing_map_section(
                     airport.lat, airport.lon, bearing, dist_ft / _FT_PER_M
                 )
                 pts.append((lat2, lon2))
+            return pts
+
+        def _track_to_lonlatalt(traj):
+            """Same as _track_to_latlons but also carries z (altitude AGL ft)
+            converted to meters.  Returns [[lon, lat, alt_m], ...].
+            Used by the 3-D pydeck map (Charlie #G2).
+            """
+            pts = []
+            for p in traj:
+                x_ft = p.get('x', 0.0)
+                y_ft = p.get('y', 0.0)
+                z_ft = max(p.get('z', 0.0), 0.0)
+                dist_ft = math.hypot(x_ft, y_ft)
+                if dist_ft < 1e-6:
+                    pts.append([airport.lon, airport.lat, z_ft / _FT_PER_M])
+                    continue
+                bearing = (rwy_hdg + math.degrees(math.atan2(x_ft, y_ft))) % 360.0
+                lat2, lon2 = offset_latlon(
+                    airport.lat, airport.lon, bearing, dist_ft / _FT_PER_M
+                )
+                pts.append([lon2, lat2, z_ft / _FT_PER_M])
             return pts
 
         # Find the row matching the critical altitude (or closest at-or-above)
@@ -885,6 +1043,11 @@ def render_landing_map_section(
                         'latlons': _track_to_latlons(sub['trajectory']),
                         'tooltip': f"{label} from {crit_row['alt_agl']} ft AGL",
                     })
+                    envelope_tracks_3d.append({
+                        'label': f"{label} @ {crit_row['alt_agl']} ft AGL",
+                        'color': (22, 163, 74) if side == 'left' else (34, 197, 94),
+                        'coords': _track_to_lonlatalt(sub['trajectory']),
+                    })
 
         # Straight-ahead-max track (engineless landing along centerline)
         sa_row = None
@@ -902,6 +1065,11 @@ def render_landing_map_section(
                 'dash_array': '6,6',
                 'latlons': _track_to_latlons(sa_row['straight_ahead']['trajectory']),
                 'tooltip': f"Straight-ahead max @ {sa_row['alt_agl']} ft AGL",
+            })
+            envelope_tracks_3d.append({
+                'label': f"Straight-ahead max @ {sa_row['alt_agl']} ft AGL",
+                'color': (34, 211, 238),
+                'coords': _track_to_lonlatalt(sa_row['straight_ahead']['trajectory']),
             })
 
     # ── F7-v2: fetch OSM airport perimeter polygon (cached per session) ──
@@ -939,6 +1107,50 @@ def render_landing_map_section(
         airport_perimeter=airport_perimeter,
     )
     st_folium(fmap, height=600, width=None, returned_objects=[])
+
+    # ── Charlie #G2: 3-D satellite map with turnback curves ──
+    if envelope_tracks_3d:
+        st.markdown("### 🛰️ 3-D Satellite View — Turnback Curves")
+        ctl_cols = st.columns([1, 1, 1, 2])
+        show_3d = ctl_cols[0].checkbox(
+            "Show 3-D map", value=True,
+            help=("Renders the critical-altitude turnback ground tracks in 3-D "
+                  "over Esri World Imagery satellite tiles.  Drag to rotate; "
+                  "shift-drag (or two-finger) to pitch."),
+        )
+        if show_3d:
+            exag = ctl_cols[1].slider(
+                "Vertical exaggeration",
+                min_value=1.0, max_value=15.0, value=5.0, step=0.5,
+                help=("Altitude multiplier applied to the 3-D paths.  At 1× "
+                      "the climb profile is barely visible at airport scale; "
+                      "5–10× makes the 'heart shape' easy to read."),
+            )
+            pitch = ctl_cols[2].slider(
+                "Camera pitch (°)",
+                min_value=0, max_value=85, value=55, step=5,
+                help="0° = top-down, 60–70° = oblique.",
+            )
+            try:
+                deck = build_3d_satellite_map(
+                    airport=airport,
+                    runway_heading_deg=runway_heading,
+                    envelope_tracks_3d=envelope_tracks_3d,
+                    airport_perimeter=airport_perimeter,
+                    altitude_exaggeration=exag,
+                    pitch_deg=float(pitch),
+                    glide_radius_high_m=r_high_m,
+                )
+                st.pydeck_chart(deck, use_container_width=True)
+                st.caption(
+                    f"Altitudes are exaggerated **{exag:.1f}×**. Green = "
+                    f"turnback ground track at the critical altitude "
+                    f"({int(target_alt):,} ft AGL).  Cyan = straight-ahead "
+                    f"max-altitude glide.  Tracks start at the engine-failure "
+                    f"point above the runway and descend to touchdown."
+                )
+            except Exception as exc:  # noqa: BLE001 — pydeck failures are non-fatal
+                st.warning(f"3-D map could not render: {exc}")
 
     # ── Interpretation guide ──
     with st.expander("How to read this map", expanded=False):
