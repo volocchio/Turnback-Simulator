@@ -663,137 +663,118 @@ def run_turnback_page():
     wind_2000_kt = 0
     wind_3000_kt = 0
 
-    # Runway Geometry
+    # Runway Geometry — runway model is always on (departure airport is mandatory).
     st.sidebar.markdown("---")
     st.sidebar.subheader("Runway Geometry")
-    use_runway = st.sidebar.checkbox("Enable runway model", value=False,
-        help="When ON, the sim models a physical runway with finite length. "
-             "It tracks whether the aircraft can touch down on the runway surface "
-             "and stop before overrunning the end. Landing flaps auto-deploy on final, "
-             "forward slip is used if too high, and all four landing options are evaluated: "
-             "straight-ahead, 180° turnback, 360° orbit + turnback, and full circuit "
-             "back to original heading. When OFF, success is simply crossing the "
-             "departure point with altitude remaining."
-    )
+    use_runway = True
     runway_friction = 1.0  # default = standard dry asphalt
-    if use_runway:
-        # Default runway length to DB value if airport selected
-        _default_rwy_len = int(round(runway_length_db)) if runway_length_db > 0 else 5500
-        _default_rwy_len = max(1000, min(15000, _default_rwy_len))
-        if runway_length_db > 0:
-            st.sidebar.caption(
-                f"Runway length pre-filled from {selected_airport_ident} "
-                f"RW {selected_runway_ident}."
-            )
-        runway_length = st.sidebar.number_input(
-            "Runway length (ft)", min_value=1000, max_value=15000,
-            value=_default_rwy_len, step=100,
+    # Default runway length to DB value if airport selected
+    _default_rwy_len = int(round(runway_length_db)) if runway_length_db > 0 else 5500
+    _default_rwy_len = max(1000, min(15000, _default_rwy_len))
+    if runway_length_db > 0:
+        st.sidebar.caption(
+            f"Runway length pre-filled from {selected_airport_ident} "
+            f"RW {selected_runway_ident}."
         )
+    runway_length = st.sidebar.number_input(
+        "Runway length (ft)", min_value=1000, max_value=15000,
+        value=_default_rwy_len, step=100,
+    )
 
-        # Charlie #5b — POH-derived liftoff distance estimator.
-        # If a POH reference number exists for this aircraft, default to ON
-        # and scale by (W/MTOW)² × 1/σ.  Otherwise the field is a manual entry.
-        _poh_key = ac_key[0] if ac_key[0] in POH_GROUND_ROLL_FT else None
-        if _poh_key:
-            use_poh_liftoff = st.sidebar.checkbox(
-                "Estimate liftoff distance from POH",
-                value=True,
-                help=f"Use the published POH ground-roll for the {_poh_key} "
-                     "(sea level, ISA, MTOW) and scale by weight² and "
-                     "1/density-ratio for the selected field/ISA conditions.  "
-                     "Uncheck to enter the value manually.",
-            )
-            if use_poh_liftoff:
-                _est = estimate_ground_roll(_poh_key, config, weight, field_elev, isa_dev)
-                liftoff_distance = float(round(_est.ground_roll_ft, 0)) if _est else 1000.0
-                if _est:
-                    st.sidebar.caption(
-                        f"POH base {int(_est.base_sl_mtow_ft)} ft · "
-                        f"weight × {_est.weight_factor:.2f} · "
-                        f"density × {_est.density_factor:.2f} (DA "
-                        f"{int(_est.density_altitude_ft):,} ft) → "
-                        f"**{int(round(_est.ground_roll_ft)):,} ft**"
-                    )
-            else:
-                liftoff_distance = float(st.sidebar.number_input(
-                    "Liftoff distance (ft)", min_value=100, max_value=10000,
-                    value=1000, step=100,
-                ))
+    # Charlie #5b — POH-derived liftoff distance estimator.
+    # If a POH reference number exists for this aircraft, default to ON
+    # and scale by (W/MTOW)² × 1/σ.  Otherwise the field is a manual entry.
+    _poh_key = ac_key[0] if ac_key[0] in POH_GROUND_ROLL_FT else None
+    if _poh_key:
+        use_poh_liftoff = st.sidebar.checkbox(
+            "Estimate liftoff distance from POH",
+            value=True,
+            help=f"Use the published POH ground-roll for the {_poh_key} "
+                 "(sea level, ISA, MTOW) and scale by weight² and "
+                 "1/density-ratio for the selected field/ISA conditions.  "
+                 "Uncheck to enter the value manually.",
+        )
+        if use_poh_liftoff:
+            _est = estimate_ground_roll(_poh_key, config, weight, field_elev, isa_dev)
+            liftoff_distance = float(round(_est.ground_roll_ft, 0)) if _est else 1000.0
+            if _est:
+                st.sidebar.caption(
+                    f"POH base {int(_est.base_sl_mtow_ft)} ft · "
+                    f"weight × {_est.weight_factor:.2f} · "
+                    f"density × {_est.density_factor:.2f} (DA "
+                    f"{int(_est.density_altitude_ft):,} ft) → "
+                    f"**{int(round(_est.ground_roll_ft)):,} ft**"
+                )
         else:
-            st.sidebar.caption(
-                f"*No POH reference for {ac_key[0]} — enter manually.*"
-            )
             liftoff_distance = float(st.sidebar.number_input(
                 "Liftoff distance (ft)", min_value=100, max_value=10000,
                 value=1000, step=100,
             ))
-        # Runway condition friction coefficient
-        runway_condition_options = {
-            'dry': ('Dry asphalt', 1.0),
-            'wet': ('Wet asphalt', 0.7),
-            'grass_dry': ('Grass (dry)', 0.6),
-            'grass_wet': ('Grass (wet)', 0.3),
-        }
-        runway_condition = st.sidebar.radio(
-            "Runway condition",
-            list(runway_condition_options.keys()),
-            format_func=lambda x: runway_condition_options[x][0],
-            index=0,
-            help="Affects braking friction coefficient, which impacts landing distance and last abort point.",
-        )
-        runway_friction = runway_condition_options[runway_condition][1]
-        
-        touchdown_margin_ft = st.sidebar.number_input(
-            "Touchdown safety margin (ft)", min_value=0, max_value=3000, value=0, step=50,
-            help="Extra runway distance beyond the computed braking rollout. "
-                 "The sim aims to touch down far enough from the runway end so that "
-                 "this much additional runway remains after the aircraft stops. "
-                 "0 = aim based on rollout only (no extra buffer).",
-        )
-
-        # Charlie #E1 — intersection departure.  Pilot lines up partway down
-        # the runway instead of at the threshold.  Reduces runway available
-        # for a straight-ahead landing and shifts the turnback geometry.
-        intersection_offset_ft = float(st.sidebar.number_input(
-            "Intersection departure offset (ft)",
-            min_value=0, max_value=int(max(0, runway_length - 500)), value=0, step=100,
-            help=(
-                "Distance from the runway threshold to the takeoff position.  "
-                "0 = full-length departure (default).  Set positive when "
-                "departing from a runway intersection — the aircraft starts "
-                "the takeoff roll partway down the runway, so the runway "
-                "REMAINING ahead for a straight-ahead landing shrinks by this "
-                "amount.  Common at busy fields: e.g. KSEZ has intersection "
-                "departures from taxiway A4."
-            ),
-        ))
-        st.sidebar.caption(
-            "**Aim point** = computed rollout + safety margin.  "
-            "Forward slip used if needed to steepen descent.  "
-            "**Straight-ahead** lands on the remaining runway."
-        )
-        aim_point = runway_length  # passed for API compat; sim auto-computes aim_y
     else:
-        runway_length = 0.0
-        liftoff_distance = 0.0
-        aim_point = 0.0
-        touchdown_margin_ft = 0.0
-        intersection_offset_ft = 0.0
+        st.sidebar.caption(
+            f"*No POH reference for {ac_key[0]} — enter manually.*"
+        )
+        liftoff_distance = float(st.sidebar.number_input(
+            "Liftoff distance (ft)", min_value=100, max_value=10000,
+            value=1000, step=100,
+        ))
+    # Runway condition friction coefficient
+    runway_condition_options = {
+        'dry': ('Dry asphalt', 1.0),
+        'wet': ('Wet asphalt', 0.7),
+        'grass_dry': ('Grass (dry)', 0.6),
+        'grass_wet': ('Grass (wet)', 0.3),
+    }
+    runway_condition = st.sidebar.radio(
+        "Runway condition",
+        list(runway_condition_options.keys()),
+        format_func=lambda x: runway_condition_options[x][0],
+        index=0,
+        help="Affects braking friction coefficient, which impacts landing distance and last abort point.",
+    )
+    runway_friction = runway_condition_options[runway_condition][1]
+
+    touchdown_margin_ft = st.sidebar.number_input(
+        "Touchdown safety margin (ft)", min_value=0, max_value=3000, value=0, step=50,
+        help="Extra runway distance beyond the computed braking rollout. "
+             "The sim aims to touch down far enough from the runway end so that "
+             "this much additional runway remains after the aircraft stops. "
+             "0 = aim based on rollout only (no extra buffer).",
+    )
+
+    # Charlie #E1 — intersection departure.  Pilot lines up partway down
+    # the runway instead of at the threshold.  Reduces runway available
+    # for a straight-ahead landing and shifts the turnback geometry.
+    intersection_offset_ft = float(st.sidebar.number_input(
+        "Intersection departure offset (ft)",
+        min_value=0, max_value=int(max(0, runway_length - 500)), value=0, step=100,
+        help=(
+            "Distance from the runway threshold to the takeoff position.  "
+            "0 = full-length departure (default).  Set positive when "
+            "departing from a runway intersection — the aircraft starts "
+            "the takeoff roll partway down the runway, so the runway "
+            "REMAINING ahead for a straight-ahead landing shrinks by this "
+            "amount.  Common at busy fields: e.g. KSEZ has intersection "
+            "departures from taxiway A4."
+        ),
+    ))
+    st.sidebar.caption(
+        "**Aim point** = computed rollout + safety margin.  "
+        "Forward slip used if needed to steepen descent.  "
+        "**Straight-ahead** lands on the remaining runway."
+    )
+    aim_point = runway_length  # passed for API compat; sim auto-computes aim_y
 
     # Always remember the *published* DB length so the data card can show it
-    # even when the runway model is OFF (Charlie #A3).
+    # even when the DB lookup fails (Charlie #A3).
     runway_length_published = float(runway_length_db) if runway_length_db > 0 else 0.0
 
-    # Flap on return only (only relevant without runway model)
+    # Landing flaps auto-deploy on final approach in the runway model.
     flap_on_return = False
-    if flap_setting > 0 and not use_runway:
-        flap_on_return = st.sidebar.checkbox("Deploy flaps on final only", value=False,
-                                              help="Stay clean during the turn, deploy flaps only when aligned with the runway")
-    if use_runway:
-        st.sidebar.caption(
-            "ℹ️ **Runway model active:** landing flaps auto-deploy on "
-            "final approach. Forward slip added if needed to make the runway."
-        )
+    st.sidebar.caption(
+        "ℹ️ **Runway model active:** landing flaps auto-deploy on "
+        "final approach. Forward slip added if needed to make the runway."
+    )
 
     # Prop state after engine failure
     st.sidebar.markdown("---")
