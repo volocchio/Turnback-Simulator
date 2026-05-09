@@ -382,6 +382,11 @@ def run_turnback_page():
             )
             use_airport_db = False
         else:
+            rwy_default_idx = 0
+            for _i in range(len(runway_ends)):
+                if str(runway_ends.iloc[_i]["rwy_ident"]).strip() == "21":
+                    rwy_default_idx = _i
+                    break
             rwy_idx = st.sidebar.selectbox(
                 "Runway",
                 options=range(len(runway_ends)),
@@ -392,6 +397,7 @@ def run_turnback_page():
                     if pd.notna(runway_ends.iloc[i]['heading_degT'])
                     else f"{runway_ends.iloc[i]['rwy_ident']} — heading unknown"
                 ),
+                index=rwy_default_idx,
             )
             rwy_row = runway_ends.iloc[rwy_idx]
             selected_runway_ident = str(rwy_row["rwy_ident"])
