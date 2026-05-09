@@ -83,8 +83,10 @@ def run_turnback_page():
         st.error("No single-engine aircraft found in configuration.")
         return
     labels = [f"{m} ({mod})" if mod != 'Flatwing' else m for m, mod in all_keys]
-    # Default to Meridian if available
-    default_idx = next((i for i, k in enumerate(all_keys) if k[0] == 'Meridian'), 0)
+    # Default to C150 if available, else Meridian, else first
+    default_idx = next((i for i, k in enumerate(all_keys) if k[0] == 'C150'), None)
+    if default_idx is None:
+        default_idx = next((i for i, k in enumerate(all_keys) if k[0] == 'Meridian'), 0)
     sel_idx = st.sidebar.selectbox("Aircraft", range(len(labels)), format_func=lambda i: labels[i], index=default_idx)
     ac_key = all_keys[sel_idx]
     config = AIRCRAFT_CONFIG[ac_key]
