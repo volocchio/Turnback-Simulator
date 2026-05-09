@@ -111,14 +111,14 @@ def test_card_dead_zone_warning():
     res = _sample_res()
     # Make a clear dead zone: SA max 200, crit min 700, gap=500 > 50
     html = build_takeoff_data_card(res, _sample_crit())
-    assert "DEAD ZONE" in html
+    assert "CRITICAL ZONE" in html
 
 
 def test_card_no_dead_zone_when_overlap():
     res = _sample_res()
     res['straight_ahead_max_alt'] = 800  # > crit_min 700
     html = build_takeoff_data_card(res, _sample_crit())
-    assert "NO DEAD ZONE" in html
+    assert "NO CRITICAL ZONE" in html
 
 # --- Sprint D1 (F3/F4/F5): MSL alongside AGL, departure-end threshold, phase summary ---
 
