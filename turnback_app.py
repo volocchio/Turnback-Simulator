@@ -337,17 +337,12 @@ def run_turnback_page():
         ),
     )
 
-    # ── Departure Airport (optional) ──
+    # ── Departure Airport ──
     st.sidebar.markdown("---")
     st.sidebar.subheader("Departure Airport")
-    use_airport_db = st.sidebar.checkbox(
-        "Look up airport from database",
-        value=False,
-        help="Pick an airport + runway to auto-fill field elevation, "
-             "runway heading, and runway length from the OurAirports database. "
-             "Wind direction will be entered in true degrees (matching METAR), "
-             "and headwind/crosswind are auto-computed.",
-    )
+    # Always pick an airport + runway from the OurAirports database (default KSEZ rwy 21).
+    # Manual-entry fallback only kicks in if the selected airport has no runway data.
+    use_airport_db = True
 
     selected_airport_ident = ""
     selected_runway_ident = ""
