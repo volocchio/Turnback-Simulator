@@ -1169,6 +1169,70 @@ def run_turnback_page():
     else:
         col5.metric("Turn Radius", "—")
 
+    # ── Safety-margin visualization (Phase 2 — Charlie #5) ──
+    # Make the buffer between *calculated minimum* and *recommended* visible.
+    _buf_pct = (safety_margin_factor - 1.0) * 100.0
+    _worse_calc = max(critical_alt_left, critical_alt_right)
+    _worse_safe = max(critical_alt_left_safe, critical_alt_right_safe)
+    _buffer_ft = _worse_safe - _worse_calc
+    fig_margin = go.Figure()
+    # Draw two horizontal bars: one direction each.
+    fig_margin.add_trace(go.Bar(
+        y=['LEFT turn', 'RIGHT turn'],
+        x=[critical_alt_left, critical_alt_right],
+        name='Calculated minimum (aerodynamic)',
+        orientation='h',
+        marker=dict(color='rgba(255, 127, 14, 0.85)'),
+        text=[f'{critical_alt_left:,.0f} ft', f'{critical_alt_right:,.0f} ft'],
+        textposition='inside',
+        insidetextanchor='end',
+        textfont=dict(color='white', size=13),
+        hovertemplate='Calculated minimum: %{x:,.0f} ft AGL<extra></extra>',
+    ))
+    fig_margin.add_trace(go.Bar(
+        y=['LEFT turn', 'RIGHT turn'],
+        x=[critical_alt_left_safe - critical_alt_left,
+           critical_alt_right_safe - critical_alt_right],
+        name=f'Safety buffer (+{_buf_pct:.0f}%)',
+        orientation='h',
+        marker=dict(color='rgba(44, 160, 44, 0.65)', pattern=dict(shape='/')),
+        text=[f'+{critical_alt_left_safe - critical_alt_left:,.0f}',
+              f'+{critical_alt_right_safe - critical_alt_right:,.0f}'],
+        textposition='inside',
+        textfont=dict(color='white', size=12),
+        hovertemplate='Safety buffer: +%{x:,.0f} ft<extra></extra>',
+    ))
+    # Recommended threshold marker (dashed vertical at safe altitude per direction)
+    for direction, calc, safe in (
+        ('LEFT turn', critical_alt_left, critical_alt_left_safe),
+        ('RIGHT turn', critical_alt_right, critical_alt_right_safe),
+    ):
+        fig_margin.add_annotation(
+            x=safe, y=direction,
+            text=f'<b>Recommended {safe:,.0f} ft</b>',
+            showarrow=True, arrowhead=2, ax=40, ay=-25,
+            bgcolor='rgba(255,255,255,0.85)', bordercolor='black',
+            font=dict(size=11),
+        )
+    fig_margin.update_layout(
+        barmode='stack',
+        title=f'Calculated minimum vs recommended  ·  buffer = +{_buf_pct:.0f}%  '
+              f'({_buffer_ft:,.0f} ft on the worst direction)',
+        xaxis_title='Altitude AGL at engine failure (ft)',
+        height=260,
+        margin=dict(t=60, b=40, l=80, r=20),
+        legend=dict(orientation='h', yanchor='bottom', y=1.05, xanchor='right', x=1),
+    )
+    st.plotly_chart(fig_margin, use_container_width=True)
+    st.caption(
+        f"**The orange bar is what the physics says.**  The hatched green is the "
+        f"buffer you've added with the safety-margin slider ({safety_margin_factor:.2f}×).  "
+        f"Slide it up if the wind is gusty, the airplane is unfamiliar, or you're not "
+        f"current.  Slide it down only if you've practiced this exact maneuver, in this "
+        f"airplane, in similar conditions, recently.  **The recommended number is what "
+        f"goes on your hold-short brief.**"
+    )
+
     # ── Density-altitude proof readout ──
     # Show that high DA actually moves the numbers: TAS > IAS, ROC drops,
     # ground roll grows.  Compare the user's DA to a sea-level ISA baseline.
@@ -1876,6 +1940,12 @@ def run_turnback_page():
             f"explodes and you need more altitude to complete it.  "
             f"**This is why 'just bank harder' is wrong advice.**"
         )
+        st.caption(
+            "Reference: [Rogers, *Looking Back at the Turn-Back Maneuver* (USNA)]"
+            "(https://www.usna.edu/AeroDept/_files/documents/Faculty/Rogers/RogersTurnBack.pdf) "
+            "derives this trade analytically; [Jett, USAFA 1982 (DTIC ADA122862)]"
+            "(https://apps.dtic.mil/sti/citations/ADA122862) confirmed it in simulator studies."
+        )
 
     if do_reaction_sens:
         reaction_sweep = [0, 2, 3, 5, 7, 10]
@@ -1939,6 +2009,12 @@ def run_turnback_page():
                 f"At a realistic 5-second startle response, it needs **{rs['crits'][rs['rts'].index(5)] if 5 in rs['rts'] else '?'} ft**.  "
                 f"At a 10-second 'oh-shit' delay, it needs **{rs['crits'][-1]} ft**.  "
                 f"**The brief at the runway hold-short is the cheapest altitude you'll ever buy.**"
+            )
+            st.caption(
+                "Reference: FAA assumes 3 sec for engine-out response; "
+                "[FAA AC 61-83K](https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentID/1043603) "
+                "directs CFIs to train startle response.  Real-world studies "
+                "(NTSB Loss-of-Control series) consistently measure 5–8 sec for unbriefed pilots."
             )
 
     # ── Theory & References ──
@@ -2592,7 +2668,7 @@ def _show_curriculum_section():
     ## Turnback Simulator — Training Curriculum
 
     **For:** CFIs, Designated Pilot Examiners, and working single-engine pilots
-    **Reference:** AC 61-83K · AFH Ch 6 (proposed revisions) · Rogers (USNA) · Jett (USAFA)
+    **Reference:** [AC 61-83K](https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentID/1043603) · [AFH Ch 6](https://www.faa.gov/regulations_policies/handbooks_manuals/aviation/airplane_handbook) (proposed revisions) · [Rogers (USNA)](https://www.usna.edu/AeroDept/_files/documents/Faculty/Rogers/RogersTurnBack.pdf) · [Jett (USAFA, DTIC ADA122862)](https://apps.dtic.mil/sti/citations/ADA122862)
     **Authors:** Nick Guida (Volo Altro / Tamarack) · Charlie Precourt (EAA McSpadden Project)
 
     ---
@@ -2835,26 +2911,35 @@ def _show_theory_section():
     
     This simulator is grounded in the **EAA McSpadden Project**, which includes:
     
-    1. **Prof. James F. Rogers** — "Estimating Turnback Altitude for Single-Engine Aircraft"
+    1. **Prof. James F. Rogers** — *"Looking Back at the Turn-Back Maneuver"*
+       — [Naval Academy paper PDF](https://www.usna.edu/AeroDept/_files/documents/Faculty/Rogers/RogersTurnBack.pdf) ·
+       [AOPA summary](https://www.aopa.org/news-and-media/all-news/2017/october/flight-training-magazine/the-impossible-turn)
        - Analytical method for calculating altitude loss in the turn
        - Accounts for lift/drag, load factor, turn geometry
        - Basis for safety margins in this simulator
     
-    2. **Brent Jett** (USAF Academy, 1978–1982) — Simulator-based study of the impossible turn
+    2. **Brent W. Jett** (USAF Academy, 1982) — *"An Analysis of the Engine-Out Turnback Maneuver for a Light, Single-Engine Aircraft"*
+       — [DTIC report ADA122862](https://apps.dtic.mil/sti/citations/ADA122862)
        - Evaluated critical altitude across aircraft types
        - Effect of pilot skill, reaction time, bank angle
        - Results in similar range to this simulator (500–1500 ft AGL typical)
     
-    3. **FAA Advisory Circular 61-83K** (2024) — Biennial Flight Review mandate
+    3. **FAA Advisory Circular 61-83K** (2024) — *"Nationally Scheduled, FAA-Approved, Industry-Conducted Flight Instructor Refresher Courses"*
+       — [FAA AC 61-83K PDF](https://www.faa.gov/regulations_policies/advisory_circulars/index.cfm/go/document.information/documentID/1043603)
        - Paragraph A.114: Pilots must train engine-out turnback scenarios
        - Proposed EAA/FAA method for quantitative assessment
     
-    4. **FAA Airplane Flying Handbook** (proposed edits, Chapters 6 & 18)
-       - Emergency procedures, engine-out approaches, landing techniques
+    4. **FAA Airplane Flying Handbook** (FAA-H-8083-3C, 2024)
+       — [FAA AFH PDF](https://www.faa.gov/regulations_policies/handbooks_manuals/aviation/airplane_handbook)
+       — Chapter 6 (takeoff/departure) and Chapter 18 (emergency procedures)
     
-    5. **Standard Aerodynamic References**
-       - Anderson, "Fundamentals of Aerodynamics" — drag polar, load factor
-       - FAA "Aircraft Performance" handbook — best-glide speed, descent gradient
+    5. **EAA Sport Aviation, May 2026** — *"Rethinking the Impossible Turn"* (McSpadden Project feature)
+       — [EAA Sport Aviation archive](https://www.eaa.org/eaa/news-and-publications/eaa-publications/sport-aviation)
+    
+    6. **Standard Aerodynamic References**
+       - Anderson, *Fundamentals of Aerodynamics* (McGraw-Hill, 6th ed.) — drag polar, load factor
+       - FAA *Pilot's Handbook of Aeronautical Knowledge* (FAA-H-8083-25C) —
+         [PHAK PDF](https://www.faa.gov/regulations_policies/handbooks_manuals/aviation/phak)
     
     ---
     
