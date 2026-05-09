@@ -79,7 +79,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 **E. Operations realism**
 - [x] Intersection-departure mode *(Sprint C2 E1)*
 - [x] Gear-retract timing *(Sprint C2 E2)*
-- [ ] Heading-vs-track display toggle (compare runway-heading hold vs runway-track hold)  *(deferred — needs sim-side air-mass frame)*
+- [x] Heading-vs-track display toggle (compare runway-heading hold vs runway-track hold)  *(E2 shipped d9e14ea — sidebar radio in `turnback_app.py`; `climb_steering` kwarg threaded through engine; heading-hold mode applies surface-wind drift × climb-time as `x_init` so the airplane is offset downwind at engine failure)*
 
 **F. Card / output**
 - [x] MSL altitude on the card, **bold** *(Sprint A)*
