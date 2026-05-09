@@ -91,7 +91,7 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 
 **G. Visualization**
 - [x] Two arcs on the runway map showing top + bottom of the dead zone *(Sprint D2 G1)*
-- [ ] 3D view eyepoint: dead-zone, turnback path  *(deferred)*
+- [x] 3D view eyepoint: dead-zone, turnback path  *(G2 shipped 19a7c02 — `build_3d_satellite_map()` in `landing_map.py` uses pydeck PathLayer over Esri World Imagery TileLayer; LEFT/RIGHT turnback + straight-ahead tracks rendered with altitude (m, exaggerated 1–15× via slider) as the third coord; pitch slider 0–85°; airport perimeter polygon and runway-centerline arrow included)*
 - [ ] Pilot-perspective flyby motion mode  *(deferred)*
 - [x] Heart-shape envelope: training-only, move it to the map *(Sprint D2 G4 — overlaid on satellite map)*
 - [x] OSM legend: color swatches next to good/caution/avoid *(Sprint A G5)*
