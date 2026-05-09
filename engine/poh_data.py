@@ -51,12 +51,24 @@ from engine.flight_physics import atmos
 #   C182T        Cessna 182T Skylane POH (MTOW 3,100 lb)                ~  795 ft
 #   C182RG       Cessna 182RG Skylane POH (MTOW 3,100 lb)               ~  820 ft
 #   SR22         Cirrus SR22 POH (MTOW 3,400 lb, normally aspirated)    ~ 1080 ft
+#   SR22T        Cirrus SR22T POH (MTOW 3,600 lb, turbocharged)         ~ 1082 ft
+#   TTx          Cessna TTx (T240) POH (MTOW 3,600 lb)                  ~ 1370 ft
 #   A36          Beechcraft Bonanza A36 POH (MTOW 3,650 lb)             ~  960 ft
 #   PA28         Piper PA-28-181 Archer III POH (MTOW 2,550 lb)         ~  870 ft
+#   M20V         Mooney M20V Acclaim Ultra POH (MTOW 3,374 lb)          ~ 1025 ft
+#   Mirage       Piper PA-46-350P Mirage POH (MTOW 4,340 lb, piston)    ~ 1390 ft
 #   TBM960/910/850 Daher TBM 850/910/960 POH (ground-roll only)         ~  995 ft
 #   Meridian     Piper PA-46-500TP Meridian POH (MTOW 5,092 lb)         ~ 1366 ft
 #   M600         Piper M600 SLS POH (MTOW 6,000 lb)                     ~ 1325 ft
 #   M700         Piper M700 Fury POH (MTOW 6,000 lb)                    ~ 1325 ft
+#   PC12         Pilatus PC-12 NG/NGX POH (MTOW 10,450 lb)              ~ 1830 ft
+#   C208         Cessna 208 Caravan POH (MTOW 8,000 lb)                 ~ 1395 ft
+#   C208B        Cessna 208B Grand Caravan POH (MTOW 8,750 lb)          ~ 1405 ft
+#   C208EX       Cessna 208B Grand Caravan EX POH (MTOW 8,807 lb)       ~ 1366 ft
+#   Kodiak100    Daher Kodiak 100 POH (MTOW 7,255 lb)                   ~  934 ft
+#   Kodiak900    Daher Kodiak 900 POH (MTOW 8,000 lb)                   ~ 1078 ft
+#   Denali       Beechcraft Denali POH (MTOW 8,500 lb, target spec)     ~ 1370 ft
+#   E1000        Epic E1000 GX POH (MTOW 8,000 lb)                      ~ 1180 ft
 #
 # Twins (engines >= 2) are intentionally not included — Charlie's #5b
 # feedback is single-engine focused, and OEI takeoff distance is its
@@ -79,14 +91,26 @@ POH_GROUND_ROLL_FT = {
     'C182T':   795,
     'C182RG':  820,
     'SR22':   1080,
+    'SR22T':  1082,   # Cirrus SR22T POH (TN, MTOW 3,600 lb)
+    'TTx':    1370,   # Cessna TTx / Corvalis T240 POH @ MTOW SL ISA
     'A36':     960,
     'PA28':    870,
+    'M20V':   1025,   # Mooney M20V Acclaim Ultra POH @ MTOW SL ISA
+    'Mirage': 1390,   # Piper PA-46-350P Mirage piston POH @ MTOW SL ISA
     'TBM960':  995,
     'TBM910':  995,
     'TBM850':  995,
     'Meridian': 1366,
     'M600':   1325,
     'M700':   1325,
+    'PC12':   1830,   # Pilatus PC-12 NG/NGX POH @ MTOW SL ISA
+    'C208':   1395,   # Cessna 208 Caravan POH @ MTOW SL ISA
+    'C208B':  1405,   # Cessna 208B Grand Caravan POH @ MTOW SL ISA
+    'C208EX': 1366,   # Cessna 208B Grand Caravan EX POH @ MTOW SL ISA
+    'Kodiak100': 934, # Daher Kodiak 100 POH @ MTOW SL ISA
+    'Kodiak900': 1078,# Daher Kodiak 900 POH @ MTOW SL ISA
+    'Denali': 1370,   # Beechcraft Denali published target spec @ MTOW SL ISA
+    'E1000':  1180,   # Epic E1000 GX POH @ MTOW SL ISA
 }
 
 
