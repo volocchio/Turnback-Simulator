@@ -145,7 +145,12 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
     """Render the TOLD card as a self-contained, printable HTML document."""
     cfg = res.get('config')
     ac_key = res.get('ac_key', ('—', ''))
-    ac_label = " ".join(str(p) for p in ac_key if p) if isinstance(ac_key, (tuple, list)) else str(ac_key)
+    if isinstance(ac_key, (tuple, list)):
+        # Drop the wing-mod variant tag from the user-facing label (only meaningful internally).
+        _parts = [str(p) for p in ac_key if p and str(p) != 'Flatwing']
+        ac_label = " ".join(_parts) if _parts else str(ac_key[0])
+    else:
+        ac_label = str(ac_key)
 
     weight = res.get('weight', 0)
     mtow = getattr(cfg, 'MTOW', 0) if cfg else 0

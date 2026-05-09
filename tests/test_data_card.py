@@ -45,7 +45,8 @@ def test_card_renders_html():
     html = build_takeoff_data_card(_sample_res(), _sample_crit())
     assert html.startswith("<!doctype html>")
     assert "Takeoff Data Card" in html
-    assert "Meridian Flatwing" in html
+    assert "Meridian" in html
+    assert "Flatwing" not in html  # internal variant tag must not appear in user-facing card
     assert "KAPA" in html
     assert "17L" in html
 
