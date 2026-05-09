@@ -15,6 +15,8 @@ from engine.poh_data import (
     POH_GROUND_ROLL_FT, estimate_ground_roll,
     POH_VBG_KIAS, vbg_poh_kias,
     POH_CLIMB, vy_poh_kias, roc_poh_fpm,
+    POH_VS_KIAS, vs_poh_kias,
+    POH_LANDING_ROLL_FT, landing_roll_poh_ft,
 )
 from analysis.turnback_simulator import (
     build_turnback_envelope, simulate_turnback, optimize_turnback, best_glide_kias,
@@ -149,21 +151,35 @@ def run_turnback_page():
     )
 
     # ── Stall speeds (user-configurable, back-compute Clmax) ──
-    # Defaults from config Clmax at MTOW
-    _vs_clean_default = math.sqrt(295.0 * config.MTOW / (config.wing_area * config.Clmax))
+    # Defaults from POH where available, else from config Clmax at MTOW
+    _vs_clean_aero = math.sqrt(295.0 * config.MTOW / (config.wing_area * config.Clmax))
     _clmax_land = config.Clmax_flaps40 if config.Clmax_flaps40 > 0 else config.Clmax_flaps15
-    _vs_land_default = math.sqrt(295.0 * config.MTOW / (config.wing_area * _clmax_land)) if _clmax_land > 0 else _vs_clean_default
+    _vs_land_aero = math.sqrt(295.0 * config.MTOW / (config.wing_area * _clmax_land)) if _clmax_land > 0 else _vs_clean_aero
+    _vs_clean_poh_mtow = POH_VS_KIAS.get(ac_key[0], (None, None))[0]
+    _vs_land_poh_mtow = POH_VS_KIAS.get(ac_key[0], (None, None))[1]
+    _vs_clean_default = float(_vs_clean_poh_mtow) if _vs_clean_poh_mtow else _vs_clean_aero
+    _vs_land_default = float(_vs_land_poh_mtow) if _vs_land_poh_mtow else _vs_land_aero
 
     st.sidebar.markdown("---")
+    if _vs_clean_poh_mtow:
+        st.sidebar.caption(
+            f"**Vs defaults from POH** (at MTOW): clean **{_vs_clean_poh_mtow}** · "
+            f"landing **{_vs_land_poh_mtow}** KIAS.  "
+            f"Aerodynamic estimate would be: clean {_vs_clean_aero:.0f} · landing {_vs_land_aero:.0f}."
+        )
     vs_clean_input = st.sidebar.number_input(
         "Vs clean at MTOW (KIAS)", min_value=30, max_value=200,
         value=int(round(_vs_clean_default)), step=1,
-        help="Power-off stall speed, clean config, at MTOW. Adjusts CLmax.",
+        help="Power-off stall speed, clean config, at MTOW. Adjusts CLmax. "
+             "Defaults to POH where available.",
+        key=f"vs_clean_{ac_key[0]}",
     )
     vs_land_input = st.sidebar.number_input(
         "Vs landing flaps at MTOW (KIAS)", min_value=25, max_value=180,
         value=int(round(_vs_land_default)), step=1,
-        help="Power-off stall speed, full landing flaps, at MTOW. Adjusts CLmax_flaps.",
+        help="Power-off stall speed, full landing flaps, at MTOW. Adjusts CLmax_flaps. "
+             "Defaults to POH where available.",
+        key=f"vs_land_{ac_key[0]}",
     )
 
     # Back-compute Clmax from user stall speeds (at MTOW)
@@ -1255,6 +1271,82 @@ def run_turnback_page():
                         "thrust-deck climb model.  Large disagreements between "
                         "the two are a flag to verify the airframe drag polar "
                         "or thrust-deck assumption."
+                    )
+
+                    # P4 — Service-ceiling proximity warning
+                    _ceiling = float(getattr(config, 'ceiling', 0.0))
+                    if _ceiling > 0:
+                        _da_now = field_elev + 120.0 * isa_dev
+                        _ceil_ratio = _da_now / _ceiling
+                        if _ceil_ratio >= 0.8:
+                            st.error(
+                                f"⚠️ **Service-ceiling alarm** — DA {_da_now:,.0f} ft "
+                                f"is {_ceil_ratio*100:.0f}% of published service ceiling "
+                                f"({_ceiling:,.0f} ft).  POH ROC of {_roc_poh_da:,.0f} fpm "
+                                f"is approaching the 100 fpm ceiling definition.  "
+                                f"**Turnback geometry will be marginal — consider a different field or wait for cooler conditions.**"
+                            )
+                        elif _ceil_ratio >= 0.6:
+                            st.warning(
+                                f"⚠️ DA {_da_now:,.0f} ft is {_ceil_ratio*100:.0f}% of "
+                                f"service ceiling ({_ceiling:,.0f} ft).  Climb performance "
+                                f"is significantly degraded — verify ROC margin before takeoff."
+                            )
+                        elif _ceil_ratio >= 0.4:
+                            st.info(
+                                f"DA {_da_now:,.0f} ft = {_ceil_ratio*100:.0f}% of "
+                                f"service ceiling ({_ceiling:,.0f} ft).  Climb performance "
+                                f"reduced but workable."
+                            )
+            except Exception:
+                pass
+
+            # P5 — Landing-roll POH cross-check (high-DA fields most at risk)
+            try:
+                _land_da = landing_roll_poh_ft(ac_key[0], config, weight, field_elev, isa_dev)
+                _land_sl = landing_roll_poh_ft(ac_key[0], config, weight, 0, 0)
+                if _land_da is not None and _land_sl is not None:
+                    _land_base = POH_LANDING_ROLL_FT.get(ac_key[0], 0)
+                    st.markdown("---")
+                    st.markdown(
+                        f"**POH landing ground-roll** (MLW/SL/ISA, dry paved) = "
+                        f"**{_land_base:,} ft** for the {ac_key[0]}"
+                    )
+                    land_cols = st.columns(2)
+                    land_cols[0].metric(
+                        f"Landing roll @ {weight:,} lb, sea level",
+                        f"{_land_sl:,.0f} ft",
+                        delta_color="off",
+                        help="POH MLW landing roll scaled by (W/MLW)².",
+                    )
+                    land_cols[1].metric(
+                        f"Landing roll @ {weight:,} lb, this DA",
+                        f"{_land_da:,.0f} ft",
+                        f"+{_land_da - _land_sl:,.0f} ft vs SL  ·  "
+                        f"+{(_land_da/_land_sl - 1)*100:.0f}% density penalty" if _land_sl > 0 else "",
+                        delta_color="off",
+                        help="POH landing roll × (W/MLW)² × (1/σ).",
+                    )
+                    # Sanity check vs runway length if available
+                    _rwy_len = float(res.get('runway_length', 0) or 0)
+                    if _rwy_len > 0:
+                        _margin = _rwy_len - _land_da
+                        _ratio = _land_da / _rwy_len
+                        if _ratio > 0.6:
+                            st.warning(
+                                f"⚠️ Landing roll {_land_da:,.0f} ft is **{_ratio*100:.0f}%** "
+                                f"of runway ({_rwy_len:,.0f} ft).  Margin only {_margin:,.0f} ft — "
+                                f"consider this when planning the turnback aim point."
+                            )
+                        else:
+                            st.caption(
+                                f"Landing roll uses {_ratio*100:.0f}% of runway length "
+                                f"({_rwy_len:,.0f} ft) at this DA — {_margin:,.0f} ft margin."
+                            )
+                    st.caption(
+                        "Scaling: same family as takeoff (W/MLW)² × (1/σ).  "
+                        "Conservative — assumes max braking on dry paved.  "
+                        "Wet/contaminated runways multiply this by 1.4–2×."
                     )
             except Exception:
                 pass

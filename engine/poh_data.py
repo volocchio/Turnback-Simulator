@@ -374,3 +374,156 @@ def roc_poh_fpm(
     density_factor = max(sigma, 0.01) ** float(density_exp)
     return float(roc_mtow_sl) * weight_factor * density_factor
 
+
+# ---------------------------------------------------------------------------
+#  POH Stall Speed table (KIAS at MTOW, power-off)
+# ---------------------------------------------------------------------------
+#
+# Vs (Vs1) — clean, power-off, MTOW
+# Vs0     — full landing flaps (and gear, if retract), power-off, MTOW
+#
+# Stall speed scales as sqrt(W/MTOW) at constant CLmax.
+#
+# Sources: aircraft POHs (Section 5 / Performance, or §1 Limitations).
+
+POH_VS_KIAS = {
+    # key       :  (Vs_clean, Vs0_landing)
+    'J3Cub':      ( 33,  33),   # no flaps
+    'Husky':      ( 43,  37),
+    'RV-6A':      ( 49,  47),
+    'RV-7A':      ( 51,  46),
+    'RV-8':       ( 51,  46),
+    'RV-10':      ( 60,  55),
+    'RV-12':      ( 45,  41),
+    'RV-14A':     ( 55,  50),
+    'C172S':      ( 48,  40),
+    'C150':       ( 42,  35),
+    'C152':       ( 43,  35),
+    'PA-38':      ( 50,  44),
+    'DA20':       ( 42,  37),
+    'C182T':      ( 49,  41),
+    'C182RG':     ( 50,  41),
+    'SR22':       ( 70,  60),
+    'SR22T':      ( 70,  60),
+    'TTx':        ( 70,  60),
+    'A36':        ( 65,  55),
+    'PA28':       ( 53,  45),
+    'M20V':       ( 60,  53),
+    'Mirage':     ( 69,  58),
+    'TBM850':     ( 79,  65),
+    'TBM910':     ( 79,  65),
+    'TBM960':     ( 79,  65),
+    'Meridian':   ( 75,  60),
+    'M600':       ( 75,  61),
+    'M700':       ( 75,  61),
+    'PC12':       ( 80,  67),
+    'C208':       ( 70,  53),
+    'C208B':      ( 71,  54),
+    'C208EX':     ( 71,  54),
+    'Kodiak100':  ( 60,  50),
+    'Kodiak900':  ( 65,  53),
+    'Denali':     ( 75,  61),
+    'E1000':      ( 80,  67),
+}
+
+
+def vs_poh_kias(
+    aircraft_key: str,
+    config_or_mtow,
+    weight_lb: float,
+    configuration: str = 'clean',
+) -> float | None:
+    """Return POH stall speed scaled to weight, or None if not in table.
+
+    Args:
+        aircraft_key: model key
+        config_or_mtow: AircraftConfig or float MTOW
+        weight_lb: actual weight
+        configuration: 'clean' (Vs1) | 'landing' (Vs0)
+
+    Returns:
+        Vs in KIAS, scaled by sqrt(W/MTOW) from the POH MTOW value.
+    """
+    row = POH_VS_KIAS.get(aircraft_key)
+    if row is None:
+        return None
+    idx = 1 if configuration == 'landing' else 0
+    vs_mtow = float(row[idx])
+    mtow = float(getattr(config_or_mtow, 'MTOW', config_or_mtow))
+    if mtow <= 0:
+        return vs_mtow
+    import math as _m
+    return vs_mtow * _m.sqrt(max(0.0, float(weight_lb) / mtow))
+
+
+# ---------------------------------------------------------------------------
+#  POH Landing ground-roll table (sea level, ISA, MLW, dry paved)
+# ---------------------------------------------------------------------------
+#
+# Landing ground-roll only (not the 50-ft obstacle distance), at MLW
+# (≈ MTOW for most light aircraft) and with maximum braking on dry paved
+# runway.  Use the same scaling family as takeoff:
+#
+#     LR(W, DA) = LR_ref × (W/MLW)^2 × (1/σ)
+#
+# This is conservative — actual landing distance scales somewhat better
+# with weight than takeoff, but the (W/MLW)^2 form keeps us on the safe
+# side for go/no-go decisions.
+
+POH_LANDING_ROLL_FT = {
+    'J3Cub':      290,
+    'Husky':      350,
+    'RV-6A':      500,
+    'RV-7A':      500,
+    'RV-8':       500,
+    'RV-10':      525,
+    'RV-12':      350,
+    'RV-14A':     500,
+    'C172S':      575,
+    'C150':       445,
+    'C152':       475,
+    'PA-38':      635,
+    'DA20':       620,
+    'C182T':      590,
+    'C182RG':     600,
+    'SR22':      1140,
+    'SR22T':     1140,
+    'TTx':       1100,
+    'A36':       1000,
+    'PA28':       625,
+    'M20V':      1080,
+    'Mirage':    1100,
+    'TBM850':    2100,
+    'TBM910':    2100,
+    'TBM960':    2100,
+    'Meridian':  2050,
+    'M600':      1968,
+    'M700':      1968,
+    'PC12':      2150,
+    'C208':      1735,
+    'C208B':     1745,
+    'C208EX':    1625,
+    'Kodiak100': 1485,
+    'Kodiak900': 1605,
+    'Denali':    1850,
+    'E1000':     1875,
+}
+
+
+def landing_roll_poh_ft(
+    aircraft_key: str,
+    config_or_mtow,
+    weight_lb: float,
+    field_elev_ft: float = 0.0,
+    isa_dev_c: float = 0.0,
+) -> float | None:
+    """Return POH landing ground-roll scaled to weight + DA, or None."""
+    base = POH_LANDING_ROLL_FT.get(aircraft_key)
+    if base is None:
+        return None
+    mtow = float(getattr(config_or_mtow, 'MTOW', config_or_mtow))
+    weight_factor = (float(weight_lb) / mtow) ** 2 if mtow > 0 else 1.0
+    _, _, sigma, _, _, _ = atmos(float(field_elev_ft), float(isa_dev_c))
+    density_factor = 1.0 / sigma if sigma > 0 else 1.0
+    return float(base) * weight_factor * density_factor
+
