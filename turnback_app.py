@@ -1115,8 +1115,20 @@ def run_turnback_page():
 
     # ── Key metrics ──
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Critical Alt (LEFT)", f"{critical_alt_left_safe:,.0f} ft AGL", f"({critical_alt_left:,.0f} calc)")
-    col2.metric("Critical Alt (RIGHT)", f"{critical_alt_right_safe:,.0f} ft AGL", f"({critical_alt_right:,.0f} calc)")
+    # Show MSL alongside AGL (Charlie #F1/F5 — pilots fly the altimeter, which is MSL).
+    _fe = res.get('field_elev', 0.0) or 0.0
+    col1.metric(
+        "Critical Alt (LEFT)",
+        f"{critical_alt_left_safe:,.0f} ft AGL",
+        f"{critical_alt_left_safe + _fe:,.0f} MSL  ·  ({critical_alt_left:,.0f} calc)",
+        delta_color="off",
+    )
+    col2.metric(
+        "Critical Alt (RIGHT)",
+        f"{critical_alt_right_safe:,.0f} ft AGL",
+        f"{critical_alt_right_safe + _fe:,.0f} MSL  ·  ({critical_alt_right:,.0f} calc)",
+        delta_color="off",
+    )
     col3.metric("Load Factor (nz)", f"{nz:.2f}")
     col4.metric("Stall Speed (turn)", f"{vs_turn:.0f} KIAS")
     if turn_radius and turn_radius < 1e9:
@@ -1142,6 +1154,8 @@ def run_turnback_page():
             zone_cols[0].metric(
                 "Land Straight Ahead",
                 f"0 – {int(straight_ahead_max_alt):,} ft AGL",
+                f"top = {int(straight_ahead_max_alt) + int(_fe):,} ft MSL",
+                delta_color="off",
                 help="Engine failure below this altitude: land on remaining runway, no turn needed",
             )
         else:
@@ -1156,13 +1170,14 @@ def run_turnback_page():
             zone_cols[1].metric(
                 "DEAD ZONE",
                 f"{dead_zone_low:,} – {dead_zone_high:,} ft AGL",
-                delta=f"{dead_zone_size:,} ft gap",
+                delta=f"{dead_zone_size:,} ft gap  ·  MSL {dead_zone_low + int(_fe):,}–{dead_zone_high + int(_fe):,}",
                 delta_color="inverse",
                 help="Can't land straight (overshoots) AND can't make the turnback (too low)",
             )
             st.warning(
-                f"⚠️ **Dead zone: {dead_zone_low:,} – {dead_zone_high:,} ft AGL** "
-                f"({dead_zone_size:,} ft band). In this altitude band, the aircraft "
+                f"⚠️ **Dead zone: {dead_zone_low:,} – {dead_zone_high:,} ft AGL "
+                f"({dead_zone_low + int(_fe):,} – {dead_zone_high + int(_fe):,} ft MSL)** "
+                f"— {dead_zone_size:,} ft band. In this altitude band, the aircraft "
                 f"overshoots the runway going straight ahead but is too low to complete "
                 f"the turnback. This is the most dangerous failure altitude range."
             )
@@ -1182,7 +1197,9 @@ def run_turnback_page():
 
         zone_cols[2].metric(
             "Turnback (Impossible Turn)",
-            f"≥ {turnback_min:,} ft AGL",
+            f"≥ {turnback_min:,.0f} ft AGL",
+            f"≥ {turnback_min + _fe:,.0f} ft MSL",
+            delta_color="off",
             help="Engine failure above this altitude: complete the turnback to land on the runway",
         )
 
