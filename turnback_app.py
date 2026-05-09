@@ -1203,6 +1203,56 @@ def run_turnback_page():
             help="Engine failure above this altitude: complete the turnback to land on the runway",
         )
 
+        # ── Sim start geometry (diagnostic) ──
+        _offset = int(intersection_offset_ft)
+        _liftoff = int(round(liftoff_distance)) if liftoff_distance else 0
+        _rwy_len = int(round(runway_length)) if runway_length else 0
+        _liftoff_y = _offset + _liftoff
+        _rem_after_liftoff = _rwy_len - _liftoff_y
+        with st.expander("📐 Sim start geometry (where the airplane starts on the runway)", expanded=False):
+            st.markdown(
+                f"**Runway:** `{selected_airport_ident} RW {selected_runway_ident}` — "
+                f"length **{_rwy_len:,} ft**, threshold elev **{int(_fe):,} ft MSL**, "
+                f"heading **{runway_heading_true:.0f}°T**"
+            )
+            geo_cols = st.columns(4)
+            geo_cols[0].metric("Brake-release (start of roll)", f"y = {_offset:,} ft",
+                               f"intersection offset" if _offset > 0 else "full-length departure",
+                               delta_color="off")
+            geo_cols[1].metric("Liftoff point", f"y = {_liftoff_y:,} ft",
+                               f"ground roll {_liftoff:,} ft", delta_color="off")
+            geo_cols[2].metric("Runway end", f"y = {_rwy_len:,} ft",
+                               f"{_rem_after_liftoff:,} ft of runway remaining after liftoff",
+                               delta_color="off")
+            if straight_ahead_max_alt > 0:
+                # Approximate climb distance to the SA-max altitude using crit climb gradient
+                _grad = res.get('climb_gradient', 0.07) or 0.07
+                _climb_to_dz = straight_ahead_max_alt / max(_grad, 0.01)
+                _y_at_dz = _liftoff_y + _climb_to_dz
+                geo_cols[3].metric("Position at dead-zone-low",
+                                   f"y ≈ {_y_at_dz:,.0f} ft",
+                                   f"{_rwy_len - _y_at_dz:,.0f} ft of runway ahead",
+                                   delta_color="off")
+            else:
+                geo_cols[3].metric("Position at dead-zone-low", "n/a",
+                                   "SA not feasible from any altitude", delta_color="off")
+            st.caption(
+                "Coordinate system: **y = 0 at the departure-end runway threshold**, "
+                "increasing in the takeoff direction. The sim places the aircraft at "
+                "**y = intersection offset** at brake release, accelerates to liftoff, "
+                "then climbs at the airframe's best-rate gradient. If the engine fails, "
+                "glide continues from the y-position at failure altitude. Touchdown "
+                "must occur at y ≤ runway_length to count as a successful straight-ahead "
+                "landing."
+            )
+            if _rem_after_liftoff < 500:
+                st.warning(
+                    f"⚠️ Only {_rem_after_liftoff:,} ft of runway remain after liftoff. "
+                    "This severely compresses the straight-ahead landing window. "
+                    "Check that the runway length and intersection offset in the sidebar "
+                    "match what you intend."
+                )
+
         # Landing strategy note
         st.info(
             "🛩️ **Landing strategy (runway model):** On final approach, the pilot deploys "
