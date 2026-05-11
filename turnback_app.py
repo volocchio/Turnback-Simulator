@@ -1995,6 +1995,9 @@ def run_turnback_page():
         comparison_label=(
             f"Alternate ({_cmp.get('climb_steering', '')} hold)" if _cmp else None
         ),
+        primary_label=(
+            f"Primary ({res.get('climb_steering', 'track')} hold)"
+        ),
     )
 
     # ── Altitude profile ──

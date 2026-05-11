@@ -644,6 +644,48 @@ def build_satellite_map(
         caution.add_to(fmap)
         avoid.add_to(fmap)
 
+    # ── Legend overlay (May 2026) ──
+    # Builds a small HTML panel in the bottom-left listing every visible
+    # track style so pilots can read the satellite map without guessing.
+    _legend_rows = []
+    if envelope_tracks:
+        for trk in envelope_tracks:
+            color = trk.get('color', '#facc15')
+            dash = trk.get('dash_array')
+            label = trk.get('label', '—')
+            stroke = (
+                f"border-top: 3px dashed {color};"
+                if dash else
+                f"border-top: 3px solid {color};"
+            )
+            _legend_rows.append(
+                f"<div style='display:flex;align-items:center;margin:2px 0;'>"
+                f"<span style='display:inline-block;width:30px;height:0;{stroke}"
+                f"margin-right:8px;'></span>"
+                f"<span style='font-size:11px;'>{label}</span></div>"
+            )
+    if wind_speed_kt > 0:
+        _legend_rows.append(
+            "<div style='display:flex;align-items:center;margin:2px 0;'>"
+            "<span style='display:inline-block;width:30px;height:0;"
+            "border-top: 2px dashed #60a5fa;margin-right:8px;'></span>"
+            f"<span style='font-size:11px;'>Wind from {wind_from_deg:.0f}° "
+            f"@ {wind_speed_kt:.0f} kt</span></div>"
+        )
+    if _legend_rows:
+        _legend_html = (
+            "<div style='position: fixed; bottom: 30px; left: 10px; z-index: 9999; "
+            "background: rgba(255,255,255,0.92); padding: 8px 10px; "
+            "border: 1px solid #999; border-radius: 4px; "
+            "font-family: sans-serif; max-width: 320px; "
+            "box-shadow: 0 1px 4px rgba(0,0,0,0.2);'>"
+            "<div style='font-weight:bold;font-size:12px;margin-bottom:4px;'>"
+            "Map legend</div>"
+            + "".join(_legend_rows) +
+            "</div>"
+        )
+        fmap.get_root().html.add_child(folium.Element(_legend_html))
+
     folium.LayerControl(collapsed=False).add_to(fmap)
     return fmap
 
@@ -805,6 +847,7 @@ def render_landing_map_section(
     comparison_envelope=None,
     comparison_critical_alt: float = 0.0,
     comparison_label: str = None,
+    primary_label: str = None,
 ):
     """Render the satellite-map / forced-landing analysis section in the UI.
 
@@ -1062,9 +1105,10 @@ def render_landing_map_section(
                     break
 
         if crit_row:
+            _prim = primary_label or "Turnback"
             for side, color, label in (
-                ('left',  '#16a34a', 'Turnback LEFT (critical alt)'),
-                ('right', '#22c55e', 'Turnback RIGHT (critical alt)'),
+                ('left',  '#16a34a', f'{_prim} LEFT turn'),
+                ('right', '#22c55e', f'{_prim} RIGHT turn'),
             ):
                 sub = crit_row.get(side) or {}
                 if sub.get('success') and sub.get('trajectory'):
