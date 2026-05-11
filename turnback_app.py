@@ -994,7 +994,7 @@ def run_turnback_page():
     # — combined with the smart aim point — lowers the critical altitude.
     compare_climb_steering = st.sidebar.checkbox(
         "Compare alternate climb steering",
-        value=False,
+        value=True,
         help=(
             "Builds a SECOND envelope using the opposite climb-steering "
             "choice and overlays it on the satellite map (dashed gold).  "
