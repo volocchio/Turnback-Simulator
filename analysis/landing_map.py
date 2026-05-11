@@ -509,6 +509,35 @@ def build_satellite_map(
         tooltip=f"Departure heading {runway_heading_deg:.0f}°",
     ).add_to(fmap)
 
+    # Climb-out path (magenta) — from the airport reference point along the
+    # runway heading out to the engine-failure point at the turnback critical
+    # altitude.  This is the line you fly during a normal departure up to the
+    # moment the engine quits.
+    if failure_point_high and dead_zone_high_ft > 0:
+        folium.PolyLine(
+            [(airport.lat, airport.lon), tuple(failure_point_high)],
+            color='#ff00ff',
+            weight=5,
+            opacity=0.9,
+            tooltip=(f"Climb-out path → engine fails at "
+                     f"{dead_zone_high_ft:.0f} ft AGL (turnback critical)"),
+            popup=folium.Popup(
+                f"<b>Climb-out path</b><br>"
+                f"Lift-off → engine failure at the turnback critical "
+                f"altitude ({dead_zone_high_ft:.0f} ft AGL).<br>"
+                f"Length along ground reflects the climb gradient and "
+                f"liftoff distance.",
+                max_width=260,
+            ),
+        ).add_to(fmap)
+        # Small magenta marker at the lift-off / brake-release end so the
+        # user can see the path origin.
+        folium.CircleMarker(
+            location=[airport.lat, airport.lon],
+            radius=4, color='#ff00ff', fill=True, fill_opacity=1.0,
+            tooltip="Brake release / lift-off",
+        ).add_to(fmap)
+
     # Glide footprint at LOW edge of dead zone (just above straight-ahead max)
     if glide_radius_low_m > 0 and dead_zone_low_ft > 0:
         folium.Circle(
@@ -773,6 +802,9 @@ def render_landing_map_section(
     envelope=None,
     critical_alt: float = 0.0,
     straight_ahead_max_alt: float = 0.0,
+    comparison_envelope=None,
+    comparison_critical_alt: float = 0.0,
+    comparison_label: str = None,
 ):
     """Render the satellite-map / forced-landing analysis section in the UI.
 
@@ -1048,6 +1080,42 @@ def render_landing_map_section(
                         'color': (22, 163, 74) if side == 'left' else (34, 197, 94),
                         'coords': _track_to_lonlatalt(sub['trajectory']),
                     })
+
+        # ── E2-P2: comparison-envelope tracks (alternate climb steering) ──
+        if comparison_envelope and comparison_critical_alt > 0:
+            cmp_label = comparison_label or "Alternate climb steering"
+            cmp_target_alt = comparison_critical_alt
+            cmp_row = None
+            for row in comparison_envelope:
+                if row.get('alt_agl', 0) >= cmp_target_alt and (
+                    row.get('left', {}).get('success') or row.get('right', {}).get('success')
+                ):
+                    cmp_row = row
+                    break
+            if cmp_row is None and comparison_envelope:
+                for row in reversed(comparison_envelope):
+                    if (row.get('left', {}).get('success')
+                            or row.get('right', {}).get('success')):
+                        cmp_row = row
+                        break
+            if cmp_row:
+                for side, label_side in (('left', 'LEFT'), ('right', 'RIGHT')):
+                    sub = cmp_row.get(side) or {}
+                    if sub.get('success') and sub.get('trajectory'):
+                        envelope_tracks.append({
+                            'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
+                            'color': '#facc15',  # gold
+                            'weight': 3,
+                            'dash_array': '8,6',
+                            'latlons': _track_to_latlons(sub['trajectory']),
+                            'tooltip': f"{cmp_label} {label_side} from "
+                                       f"{cmp_row['alt_agl']} ft AGL",
+                        })
+                        envelope_tracks_3d.append({
+                            'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
+                            'color': (250, 204, 21),
+                            'coords': _track_to_lonlatalt(sub['trajectory']),
+                        })
 
         # Straight-ahead-max track (engineless landing along centerline)
         sa_row = None

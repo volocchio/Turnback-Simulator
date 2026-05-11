@@ -198,6 +198,92 @@ def run_turnback_page():
         Clmax_flaps15=min(clmax_land_override, config.Clmax_flaps15 * (clmax_land_override / _clmax_land)) if _clmax_land > 0 else clmax_land_override,
     )
 
+    # ── Departure Airport ──
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Departure Airport")
+    # Always pick an airport + runway from the OurAirports database (default KSEZ rwy 21).
+    # Manual-entry fallback only kicks in if the selected airport has no runway data.
+    use_airport_db = True
+
+    selected_airport_ident = ""
+    selected_runway_ident = ""
+    runway_heading_true = 0.0
+    runway_length_db = 0.0  # populated from DB when airport selected
+
+    if use_airport_db:
+        from engine.airport_db import (
+            load_airports, load_runway_ends, wind_components,
+        )
+        airports_df = load_airports()
+        # Default search to KSEZ if present
+        default_idx = 0
+        if "KSEZ" in airports_df["ident"].values:
+            default_idx = int(airports_df.index[airports_df["ident"] == "KSEZ"][0])
+        airport_idx = st.sidebar.selectbox(
+            "Airport",
+            options=range(len(airports_df)),
+            format_func=lambda i: airports_df.iloc[i]["display_name"],
+            index=default_idx,
+            help="Type to search by ICAO/local code or name.",
+        )
+        airport_row = airports_df.iloc[airport_idx]
+        selected_airport_ident = airport_row["ident"]
+        field_elev = int(round(float(airport_row["elevation_ft"])))
+
+        runway_ends = load_runway_ends(selected_airport_ident)
+        if runway_ends.empty:
+            st.sidebar.warning(
+                f"No runway data available for {selected_airport_ident}. "
+                "Falling back to manual entry."
+            )
+            use_airport_db = False
+        else:
+            rwy_default_idx = 0
+            for _i in range(len(runway_ends)):
+                if str(runway_ends.iloc[_i]["rwy_ident"]).strip() == "21":
+                    rwy_default_idx = _i
+                    break
+            rwy_idx = st.sidebar.selectbox(
+                "Runway",
+                options=range(len(runway_ends)),
+                format_func=lambda i: (
+                    f"{runway_ends.iloc[i]['rwy_ident']} — "
+                    f"{int(runway_ends.iloc[i]['length_ft'])} ft, "
+                    f"hdg {runway_ends.iloc[i]['heading_degT']:.0f}°T"
+                    if pd.notna(runway_ends.iloc[i]['heading_degT'])
+                    else f"{runway_ends.iloc[i]['rwy_ident']} — heading unknown"
+                ),
+                index=rwy_default_idx,
+            )
+            rwy_row = runway_ends.iloc[rwy_idx]
+            selected_runway_ident = str(rwy_row["rwy_ident"])
+            runway_length_db = float(rwy_row["length_ft"])
+            if pd.notna(rwy_row["heading_degT"]):
+                runway_heading_true = float(rwy_row["heading_degT"])
+            else:
+                # Fall back to numeric runway ident × 10
+                try:
+                    digits = "".join(c for c in selected_runway_ident if c.isdigit())
+                    runway_heading_true = float(digits) * 10.0 if digits else 0.0
+                except ValueError:
+                    runway_heading_true = 0.0
+            # Use threshold elevation if provided (more accurate than airport elev)
+            if pd.notna(rwy_row.get("threshold_elevation_ft")):
+                field_elev = int(round(float(rwy_row["threshold_elevation_ft"])))
+            st.sidebar.caption(
+                f"**{selected_airport_ident} RW {selected_runway_ident}** — "
+                f"elev {field_elev} ft, "
+                f"hdg {runway_heading_true:.0f}°T, "
+                f"length {int(runway_length_db)} ft"
+            )
+
+    if not use_airport_db:
+        # Field elevation (manual)
+        field_elev = st.sidebar.number_input(
+            "Field elevation (ft MSL)", min_value=0, max_value=14000,
+            value=0, step=100,
+        )
+
     # Climb-out speed at engine failure (uses current weight, not MTOW)
     vs_clean_est = math.sqrt(295.0 * weight / (config.wing_area * config.Clmax))
     vx_est = int(vs_clean_est * 1.1)   # Vx ≈ 1.1 × Vs_clean
@@ -388,92 +474,6 @@ def run_turnback_page():
         ),
     )
 
-    # ── Departure Airport ──
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Departure Airport")
-    # Always pick an airport + runway from the OurAirports database (default KSEZ rwy 21).
-    # Manual-entry fallback only kicks in if the selected airport has no runway data.
-    use_airport_db = True
-
-    selected_airport_ident = ""
-    selected_runway_ident = ""
-    runway_heading_true = 0.0
-    runway_length_db = 0.0  # populated from DB when airport selected
-
-    if use_airport_db:
-        from engine.airport_db import (
-            load_airports, load_runway_ends, wind_components,
-        )
-        airports_df = load_airports()
-        # Default search to KSEZ if present
-        default_idx = 0
-        if "KSEZ" in airports_df["ident"].values:
-            default_idx = int(airports_df.index[airports_df["ident"] == "KSEZ"][0])
-        airport_idx = st.sidebar.selectbox(
-            "Airport",
-            options=range(len(airports_df)),
-            format_func=lambda i: airports_df.iloc[i]["display_name"],
-            index=default_idx,
-            help="Type to search by ICAO/local code or name.",
-        )
-        airport_row = airports_df.iloc[airport_idx]
-        selected_airport_ident = airport_row["ident"]
-        field_elev = int(round(float(airport_row["elevation_ft"])))
-
-        runway_ends = load_runway_ends(selected_airport_ident)
-        if runway_ends.empty:
-            st.sidebar.warning(
-                f"No runway data available for {selected_airport_ident}. "
-                "Falling back to manual entry."
-            )
-            use_airport_db = False
-        else:
-            rwy_default_idx = 0
-            for _i in range(len(runway_ends)):
-                if str(runway_ends.iloc[_i]["rwy_ident"]).strip() == "21":
-                    rwy_default_idx = _i
-                    break
-            rwy_idx = st.sidebar.selectbox(
-                "Runway",
-                options=range(len(runway_ends)),
-                format_func=lambda i: (
-                    f"{runway_ends.iloc[i]['rwy_ident']} — "
-                    f"{int(runway_ends.iloc[i]['length_ft'])} ft, "
-                    f"hdg {runway_ends.iloc[i]['heading_degT']:.0f}°T"
-                    if pd.notna(runway_ends.iloc[i]['heading_degT'])
-                    else f"{runway_ends.iloc[i]['rwy_ident']} — heading unknown"
-                ),
-                index=rwy_default_idx,
-            )
-            rwy_row = runway_ends.iloc[rwy_idx]
-            selected_runway_ident = str(rwy_row["rwy_ident"])
-            runway_length_db = float(rwy_row["length_ft"])
-            if pd.notna(rwy_row["heading_degT"]):
-                runway_heading_true = float(rwy_row["heading_degT"])
-            else:
-                # Fall back to numeric runway ident × 10
-                try:
-                    digits = "".join(c for c in selected_runway_ident if c.isdigit())
-                    runway_heading_true = float(digits) * 10.0 if digits else 0.0
-                except ValueError:
-                    runway_heading_true = 0.0
-            # Use threshold elevation if provided (more accurate than airport elev)
-            if pd.notna(rwy_row.get("threshold_elevation_ft")):
-                field_elev = int(round(float(rwy_row["threshold_elevation_ft"])))
-            st.sidebar.caption(
-                f"**{selected_airport_ident} RW {selected_runway_ident}** — "
-                f"elev {field_elev} ft, "
-                f"hdg {runway_heading_true:.0f}°T, "
-                f"length {int(runway_length_db)} ft"
-            )
-
-    if not use_airport_db:
-        # Field elevation (manual)
-        field_elev = st.sidebar.number_input(
-            "Field elevation (ft MSL)", min_value=0, max_value=14000,
-            value=0, step=100,
-        )
-
     # ── Weather ──
     st.sidebar.markdown("---")
     st.sidebar.subheader("Weather")
@@ -573,15 +573,19 @@ def run_turnback_page():
         # was forcing values to multiples of 5 (the regression Charlie flagged).
         wind_speed = st.sidebar.number_input(
             "Surface wind speed (kt)", min_value=0, max_value=60,
-            value=0, step=1,
-            help="Type any integer 0–60 kt.  Use the +/- buttons for ±1 kt.",
+            value=10, step=1,
+            help="Type any integer 0–60 kt.  Use the +/- buttons for ±1 kt.  "
+                 "Default 10 kt at 45° right-quartering (worst-case turn-into-wind side).",
         )
         if use_airport_db:
+            # Default = 45° right of runway heading (right-quartering headwind)
+            _default_wind_from = int(round((runway_heading_true + 45.0) % 360.0)) if runway_heading_true else 45
             wind_from_true = st.sidebar.number_input(
                 "Surface wind FROM (°true)", min_value=0, max_value=359,
-                value=int(round(runway_heading_true)) if runway_heading_true else 0, step=1,
+                value=_default_wind_from, step=1,
                 help="Wind direction in true degrees (matches METAR).  "
                      "Headwind/crosswind components are computed from runway heading.  "
+                     "Default = runway heading + 45° (right-quartering headwind).  "
                      "Type any value 0–359°.",
             )
         else:
@@ -598,7 +602,7 @@ def run_turnback_page():
             wind_from_deg = st.sidebar.select_slider(
                 "Wind direction (relative to runway)",
                 options=list(range(0, 360, 5)),
-                value=0,
+                value=45,
                 format_func=lambda d: wind_dir_options.get(d, f"{d}°"),
             )
             wind_from_true = wind_from_deg  # legacy: relative-to-runway used directly
@@ -983,6 +987,22 @@ def run_turnback_page():
         ),
     )
 
+    # E2-P2 (May 2026) — when on, runs a second envelope with the OPPOSITE
+    # climb-steering choice and overlays it on the map plus shows a delta
+    # callout above the metrics.  The teaching purpose: in a crosswind,
+    # heading-hold pre-positions the airplane toward the favorable side and
+    # — combined with the smart aim point — lowers the critical altitude.
+    compare_climb_steering = st.sidebar.checkbox(
+        "Compare alternate climb steering",
+        value=False,
+        help=(
+            "Builds a SECOND envelope using the opposite climb-steering "
+            "choice and overlays it on the satellite map (dashed gold).  "
+            "Adds a delta callout: 'Track-hold X ft  ·  Heading-hold Y ft  "
+            "·  Δ Z ft saved'.  Doubles envelope compute time."
+        ),
+    )
+
     # Altitude step & max
     alt_step = st.sidebar.select_slider(
         "Altitude step (ft)", options=[50, 100, 200, 500], value=100,
@@ -1041,12 +1061,50 @@ def run_turnback_page():
                 climb_steering=climb_steering,
             )
 
+        # E2-P2: alternate-steering comparison envelope
+        comparison = None
+        if compare_climb_steering:
+            alt_steering = 'heading' if climb_steering == 'track' else 'track'
+            with st.spinner(f"Computing comparison ({alt_steering} hold)..."):
+                cmp_crit, cmp_env, cmp_crit_l, cmp_crit_r, cmp_sa = build_turnback_envelope(
+                    config, weight, airspeed, bank_angle, flap_setting,
+                    reaction_time, field_elev, isa_dev,
+                    alt_step=alt_step, max_alt=max_alt,
+                    wind_speed_kt=wind_speed, wind_from_deg=wind_from_deg,
+                    wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+                    wind_profile=wind_profile,
+                    wind_dir_profile=wind_dir_profile,
+                    runway_length=runway_length, liftoff_distance=liftoff_distance,
+                    aim_point=aim_point, flap_on_return=flap_on_return,
+                    speed_mode=speed_mode,
+                    prop_state=prop_state,
+                    gear_down=gear_down,
+                    gear_retract_time_s=gear_retract_time_s,
+                    intersection_offset_ft=intersection_offset_ft,
+                    vbg_clean_kias=vbg_clean_kias,
+                    vbg_geardown_kias=vbg_geardown_kias,
+                    vbg_landing_kias=vbg_landing_kias,
+                    touchdown_margin_ft=touchdown_margin_ft,
+                    runway_friction=runway_friction,
+                    climb_steering=alt_steering,
+                )
+            comparison = {
+                'climb_steering': alt_steering,
+                'envelope': cmp_env,
+                'critical_alt': cmp_crit,
+                'critical_alt_left': cmp_crit_l,
+                'critical_alt_right': cmp_crit_r,
+                'straight_ahead_max_alt': cmp_sa,
+            }
+
         st.session_state['turnback_result'] = {
             'critical_alt': critical_alt,
             'critical_alt_left': critical_alt_left,
             'critical_alt_right': critical_alt_right,
             'straight_ahead_max_alt': straight_ahead_max_alt,
             'envelope': envelope,
+            'climb_steering': climb_steering,
+            'comparison': comparison,
             'config': config,
             'weight': weight,
             'airspeed': airspeed,
@@ -1141,6 +1199,8 @@ def run_turnback_page():
                 'critical_alt_right': crit_r,
                 'straight_ahead_max_alt': sa_max,
                 'envelope': env,
+                'climb_steering': climb_steering,
+                'comparison': None,
                 'config': config,
                 'weight': weight,
                 'airspeed': airspeed,
@@ -1225,6 +1285,114 @@ def run_turnback_page():
         col5.metric("Turn Radius", f"{turn_radius:,.0f} ft")
     else:
         col5.metric("Turn Radius", "—")
+
+    # ── E2-P2: climb-steering comparison callout ──
+    _cmp = res.get('comparison')
+    if _cmp:
+        _primary_label = {'track': 'Track hold (crab)', 'heading': 'Heading hold (drift)'}[
+            res.get('climb_steering', 'track')]
+        _alt_label = {'track': 'Track hold (crab)', 'heading': 'Heading hold (drift)'}[
+            _cmp.get('climb_steering', 'heading')]
+        _primary_worst = max(critical_alt_left, critical_alt_right)
+        _alt_worst = max(_cmp.get('critical_alt_left', 0), _cmp.get('critical_alt_right', 0))
+        _delta = _primary_worst - _alt_worst  # +ve = alt is BETTER (lower) than primary
+        _winner = _alt_label if _delta > 5 else (_primary_label if _delta < -5 else "Tie")
+        if abs(_delta) < 5:
+            _msg = (
+                f"⚖️ **Climb-steering comparison** — {_primary_label}: "
+                f"**{_primary_worst:,.0f} ft** vs {_alt_label}: "
+                f"**{_alt_worst:,.0f} ft**.  Within 5 ft — wind too light or "
+                f"crosswind too small for the choice to matter."
+            )
+            st.info(_msg)
+        else:
+            _better = _alt_label if _delta > 0 else _primary_label
+            _worse = _primary_label if _delta > 0 else _alt_label
+            _better_alt = _alt_worst if _delta > 0 else _primary_worst
+            _worse_alt = _primary_worst if _delta > 0 else _alt_worst
+            _save = abs(_delta)
+            _pct = _save / max(_worse_alt, 1) * 100.0
+            _msg = (
+                f"✅ **{_better}** wins by **{_save:,.0f} ft** "
+                f"(**{_pct:.0f}% lower critical altitude**) vs **{_worse}** "
+                f"({_better_alt:,.0f} ft vs {_worse_alt:,.0f} ft).  "
+                f"In a crosswind, drifting downwind during the climb pre-positions "
+                f"the airplane on the favorable side of centerline — turning into "
+                f"the wind from there closes the gap with less than 180° of heading "
+                f"change.  Dashed gold heart on the satellite map below shows the "
+                f"alternate-steering ground track."
+            )
+            st.success(_msg)
+
+    # ── E2-P3: landing-direction crossover panel ──
+    # Walk the envelope and find the lowest successful altitude per side
+    # AND the altitude where the sim switches from a reverse landing
+    # (back into the takeoff direction) to an original-direction landing
+    # (full circuit, land downwind).  This is the teaching artifact: the
+    # pilot has TWO turnback strategies depending on altitude, not one.
+    def _scan_landing_dirs(env, side):
+        """Return (lowest_success_alt, crossover_alt_to_original).
+        crossover_alt_to_original is the LOWEST altitude at which the sim
+        chose 'original' (full circuit).  Below that, all successes are
+        'reverse' landings.  None if the maneuver never switches."""
+        lowest = None
+        crossover = None
+        for row in env or []:
+            sub = row.get(side) or {}
+            if not sub.get('success'):
+                continue
+            if lowest is None:
+                lowest = row.get('alt_agl', 0)
+            if sub.get('landing_direction') == 'original' and crossover is None:
+                crossover = row.get('alt_agl', 0)
+        return lowest, crossover
+
+    _l_low, _l_cross = _scan_landing_dirs(envelope, 'left')
+    _r_low, _r_cross = _scan_landing_dirs(envelope, 'right')
+    if (_l_low or _r_low) and (_l_cross or _r_cross):
+        # Use the worse side for the headline crossover (pilot's safer plan).
+        _crosses = [c for c in (_l_cross, _r_cross) if c is not None]
+        _lows = [c for c in (_l_low, _r_low) if c is not None]
+        _hi = max(_crosses) if _crosses else None
+        _lo = min(_lows) if _lows else None
+        # Try to get the runway numbers for the message
+        _rwy_id = res.get('runway_ident') or 'departure'
+        # Reciprocal runway = depart rwy ± 18, mod 36
+        _recip = ''
+        try:
+            _r_int = int(''.join(ch for ch in str(_rwy_id) if ch.isdigit()))
+            _recip_n = _r_int + 18 if _r_int <= 18 else _r_int - 18
+            _recip = f"{_recip_n:02d}"
+        except Exception:
+            _recip = 'reciprocal'
+        st.info(
+            f"🛬 **Two turnback strategies** — From **{int(_lo):,} ft AGL** "
+            f"up to ~**{int(_hi):,} ft AGL**, the maneuver lands **reverse** "
+            f"(back onto the runway opposite the takeoff direction — "
+            f"i.e., land **rwy {_recip}**).  Above ~**{int(_hi):,} ft AGL** "
+            f"there's enough altitude for a full circuit and same-direction "
+            f"landing on **rwy {_rwy_id}**.  The sim picks automatically; "
+            f"this band tells you what the airplane will physically do."
+        )
+        with st.expander("Landing direction at every altitude (envelope detail)",
+                         expanded=False):
+            _rows = []
+            for row in envelope or []:
+                _alt = row.get('alt_agl', 0)
+                def _lab(sub):
+                    if not sub or not sub.get('success'):
+                        return '—'
+                    return {'reverse': f'reverse → rwy {_recip}',
+                            'original': f'full circuit → rwy {_rwy_id}'}.get(
+                        sub.get('landing_direction', ''), sub.get('landing_direction', '?'))
+                _rows.append({
+                    'Alt AGL (ft)': int(_alt),
+                    'LEFT turn': _lab(row.get('left')),
+                    'RIGHT turn': _lab(row.get('right')),
+                })
+            if _rows:
+                st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                             use_container_width=True)
 
     # ── Safety-margin visualization (Phase 2 — Charlie #5) ──
     # Make the buffer between *calculated minimum* and *recommended* visible.
@@ -1822,37 +1990,12 @@ def run_turnback_page():
         envelope=envelope,
         critical_alt=float(critical_alt or 0.0),
         straight_ahead_max_alt=float(res.get('straight_ahead_max_alt', 0.0) or 0.0),
+        comparison_envelope=(_cmp or {}).get('envelope') if _cmp else None,
+        comparison_critical_alt=float((_cmp or {}).get('critical_alt') or 0.0) if _cmp else 0.0,
+        comparison_label=(
+            f"Alternate ({_cmp.get('climb_steering', '')} hold)" if _cmp else None
+        ),
     )
-
-    # ── 3D Plot ──
-    st.subheader("3D Heart-Shaped Envelope")
-    show_success = st.checkbox("Show successful (green) paths", value=True)
-    fig_3d = _build_3d_plot(envelope, critical_alt,
-                             runway_length=res.get('runway_length', 0.0),
-                             aim_point=res.get('aim_point', 0.0),
-                             liftoff_distance=res.get('liftoff_distance', 0.0),
-                             show_success=show_success)
-    st.plotly_chart(fig_3d, use_container_width=True)
-
-    # ── 2D Plan View ──
-    st.subheader("Plan View (Top Down)")
-    fig_2d = _build_2d_plan(envelope, critical_alt,
-                             runway_length=res.get('runway_length', 0.0),
-                             aim_point=res.get('aim_point', 0.0),
-                             liftoff_distance=res.get('liftoff_distance', 0.0),
-                             show_success=show_success,
-                             straight_ahead_max_alt=res.get('straight_ahead_max_alt', 0.0) or 0.0,
-                             ld_ratio=float(_ld_ratio or 0.0),
-                             climb_gradient_deg=5.0)
-    st.plotly_chart(fig_2d, use_container_width=True)
-    if (_ld_ratio or 0) > 0 and (res.get('straight_ahead_max_alt') or 0) > 0:
-        st.caption(
-            "**Dead-zone arcs (dotted):** red = low edge (top of straight-ahead band), "
-            "yellow = high edge (turnback critical alt).  Each circle is the "
-            f"still-air glide reach (radius = altitude × L/D{_ld_ratio:.1f}).  "
-            "Anywhere inside the yellow ring but outside the runway box "
-            "is your forced-landing search area at the dead-zone top."
-        )
 
     # ── Altitude profile ──
     st.subheader("Altitude vs Time — Critical Altitudes")

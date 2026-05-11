@@ -710,7 +710,28 @@ def simulate_turnback(
     x = climb_drift_x            # lateral offset from runway centerline (ft, + = right)
     y = intersection_offset_ft + dist_from_threshold + climb_drift_y
     z = failure_alt_agl          # altitude AGL (ft)
-    heading = 0.0                # radians, 0 = runway heading (+Y direction)
+    # Heading at engine failure depends on climb-steering mode (May 2026 fix):
+    #  - 'heading' hold: nose on runway heading the whole climb → heading = 0.
+    #  - 'track' hold (crab): pilot points into the wind so the ground track
+    #    stays on centerline; at failure the nose is offset from runway
+    #    heading by the crab angle, where  V_TAS · sin(crab) + wind_x = 0.
+    #    For a right crosswind (wind_x < 0) this gives a positive crab
+    #    (nose right of runway).  Turning INTO the wind from this heading
+    #    therefore requires LESS than 180° of heading change — pilots turning
+    #    into the wind get a free head start equal to the crab angle.
+    if climb_steering == 'track' and abs(_wind_x_sfc) > 0.5:
+        try:
+            _, _, _sigma_climb, _delta_climb, _, _ = atmos(field_elevation, isa_dev)
+            _vclimb_fps, _, _ = _kias_to_fps(airspeed_for_climb, _sigma_climb, _delta_climb)
+            if _vclimb_fps > 1.0:
+                _sin_crab = max(-0.99, min(0.99, -_wind_x_sfc / _vclimb_fps))
+                heading = math.asin(_sin_crab)
+            else:
+                heading = 0.0
+        except Exception:
+            heading = 0.0
+    else:
+        heading = 0.0                # radians, 0 = runway heading (+Y direction)
     t = 0.0
     phase = 'reaction'
     total_heading_change = 0.0
@@ -814,26 +835,65 @@ def simulate_turnback(
                 phase = 'turn'
         elif phase == 'turn':
             target_bank_deg = bank_angle_deg
-            # Check if heading now points at the aim point
+            # Check if heading now points at any usable point on the runway.
+            # SMART AIM POINT (P1, May 2026): Instead of always aiming at the
+            # original threshold-end target, project the airplane's current
+            # velocity vector onto the runway centerline (x = 0) and use that
+            # intersection as the aim point if it falls within usable runway
+            # bounds.  This minimizes the total heading change required and
+            # exploits any pre-failure crosswind drift — heading-hold climbouts
+            # automatically benefit from a shorter turn.  Falls back to the
+            # original 8°-tolerance check on the threshold-end aim if the
+            # smart projection isn't usable yet.
             if total_heading_change > math.pi * 0.75:  # at least 135° before checking
-                dx_to_aim = 0.0 - x
-                dy_to_aim = target_y - y
-                dist_to_aim = math.sqrt(dx_to_aim ** 2 + dy_to_aim ** 2)
-                if dist_to_aim > 10.0:
-                    bearing_to_aim = math.atan2(dx_to_aim, dy_to_aim)
-                    heading_error = bearing_to_aim - heading
-                    heading_error = (heading_error + math.pi) % (2.0 * math.pi) - math.pi
-                    if abs(heading_error) < math.radians(8.0):
-                        phase = 'return'
-                        heading = bearing_to_aim
-                        # Runway model: always deploy best landing flaps
-                        # for steeper descent and shorter rollout.
-                        if use_runway:
-                            cdo = cdo_clean + dcdo_landing
-                            clmax = clmax_landing
-                        elif flap_on_return and flap_setting > 0:
-                            cdo = cdo_clean + dcdo_flap
-                            clmax = clmax_flap
+                smart_exit = False
+                # Smart aim only applies when a runway model is active —
+                # without a defined runway we have no meaningful aim-range
+                # constraint, so retain the original behavior.
+                if use_runway and runway_length > 0:
+                    sin_h = math.sin(heading)
+                    cos_h = math.cos(heading)
+                    if abs(sin_h) > 1e-3:
+                        s_to_centerline = -x / sin_h  # forward distance to x=0 line
+                        if s_to_centerline > 0:
+                            aim_y_candidate = y + cos_h * s_to_centerline
+                            # Usable aim range along runway centerline.  For
+                            # a reverse landing the airplane crosses the far
+                            # end heading -y and must touch down with at
+                            # least rollout_est + margin of runway ahead.
+                            aim_y_min = rollout_est + touchdown_margin_ft
+                            aim_y_max = runway_length - touchdown_margin_ft
+                            if aim_y_min <= aim_y_candidate <= aim_y_max:
+                                smart_exit = True
+                                target_y = aim_y_candidate
+                                # heading already aligned with bearing-to-aim
+                                # by construction (that's how we picked aim_y).
+                if smart_exit:
+                    phase = 'return'
+                    if use_runway:
+                        cdo = cdo_clean + dcdo_landing
+                        clmax = clmax_landing
+                    elif flap_on_return and flap_setting > 0:
+                        cdo = cdo_clean + dcdo_flap
+                        clmax = clmax_flap
+                else:
+                    # Fallback: original threshold-end aim with 8° tolerance.
+                    dx_to_aim = 0.0 - x
+                    dy_to_aim = target_y - y
+                    dist_to_aim = math.sqrt(dx_to_aim ** 2 + dy_to_aim ** 2)
+                    if dist_to_aim > 10.0:
+                        bearing_to_aim = math.atan2(dx_to_aim, dy_to_aim)
+                        heading_error = bearing_to_aim - heading
+                        heading_error = (heading_error + math.pi) % (2.0 * math.pi) - math.pi
+                        if abs(heading_error) < math.radians(8.0):
+                            phase = 'return'
+                            heading = bearing_to_aim
+                            if use_runway:
+                                cdo = cdo_clean + dcdo_landing
+                                clmax = clmax_landing
+                            elif flap_on_return and flap_setting > 0:
+                                cdo = cdo_clean + dcdo_flap
+                                clmax = clmax_flap
         elif phase == 'return':
             target_bank_deg = 0.0
             # Steer toward the landing target (crab into wind)
@@ -1381,7 +1441,22 @@ def simulate_straight_ahead(
     x = climb_drift_x
     y = intersection_offset_ft + dist_from_threshold + climb_drift_y  # E1: intersection departure
     z = failure_alt_agl
-    heading = 0.0  # straight ahead
+    # Heading at engine failure depends on climb-steering mode (May 2026 fix):
+    # track-hold pilot has been crabbing into the wind, so the nose is offset
+    # from runway heading by the crab angle.  See simulate_turnback for details.
+    if climb_steering == 'track' and abs(wind_x) > 0.5:
+        try:
+            _, _, _sigma_climb, _delta_climb, _, _ = atmos(field_elevation, isa_dev)
+            _vclimb_fps, _, _ = _kias_to_fps(airspeed_for_climb, _sigma_climb, _delta_climb)
+            if _vclimb_fps > 1.0:
+                _sin_crab = max(-0.99, min(0.99, -wind_x / _vclimb_fps))
+                heading = math.asin(_sin_crab)
+            else:
+                heading = 0.0
+        except Exception:
+            heading = 0.0
+    else:
+        heading = 0.0  # straight ahead
     t = 0.0
     phase = 'reaction'
     stalled = False
