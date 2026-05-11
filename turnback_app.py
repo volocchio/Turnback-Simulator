@@ -1324,6 +1324,68 @@ def run_turnback_page():
             )
             st.success(_msg)
 
+    # ── E2-P4: Decision Ladder (3 maneuver classes, May 2026) ──
+    # Three altitude headlines side-by-side: pilot reads down their AGL
+    # and picks the cheapest maneuver that fits.
+    from analysis.turnback_simulator import find_min_alt_per_maneuver
+    _kind_alts = find_min_alt_per_maneuver(envelope)
+    _rwy_id_dl = res.get('runway_ident') or 'departure'
+    try:
+        _r_int_dl = int(''.join(ch for ch in str(_rwy_id_dl) if ch.isdigit()))
+        _recip_n_dl = _r_int_dl + 18 if _r_int_dl <= 18 else _r_int_dl - 18
+        _recip_dl = f"{_recip_n_dl:02d}"
+    except Exception:
+        _recip_dl = 'opposite'
+    st.markdown("#### 🪜 Decision Ladder — minimum altitude per maneuver")
+    _ladder_cols = st.columns(3)
+    _ladder = [
+        ('180', '180° turnback',
+         f"Land **rwy {_recip_dl}** (opposite direction).",
+         '#16a34a'),
+        ('540', '540° (orbit + turnback)',
+         f"Add a 360° orbit, then land **rwy {_recip_dl}**.",
+         '#f59e0b'),
+        ('circuit', 'Full circuit',
+         f"Continue ~360° around, land **rwy {_rwy_id_dl}** "
+         "(same direction as takeoff).",
+         '#a855f7'),
+    ]
+    for col, (kind, title, caption, color) in zip(_ladder_cols, _ladder):
+        info = _kind_alts.get(kind)
+        with col:
+            if info:
+                st.markdown(
+                    f"<div style='border-left:4px solid {color};"
+                    f"padding:6px 10px;background:rgba(0,0,0,0.03);"
+                    f"border-radius:4px;'>"
+                    f"<div style='font-size:11px;color:#666;'>{title}</div>"
+                    f"<div style='font-size:24px;font-weight:bold;'>"
+                    f"{info['alt']:,} ft AGL</div>"
+                    f"<div style='font-size:11px;color:#444;'>"
+                    f"{caption} ({info['side'].upper()} turn)</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='border-left:4px solid #999;"
+                    f"padding:6px 10px;background:rgba(0,0,0,0.03);"
+                    f"border-radius:4px;opacity:0.55;'>"
+                    f"<div style='font-size:11px;color:#666;'>{title}</div>"
+                    f"<div style='font-size:24px;font-weight:bold;'>—</div>"
+                    f"<div style='font-size:11px;color:#444;'>"
+                    f"Not feasible in tested envelope.</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+    st.caption(
+        "Each card shows the **lowest** altitude at which the simulator "
+        "completed that maneuver class on at least one side.  Above the "
+        "180° number you have a turnback; above the 540° number you can "
+        "afford an orbit; above the circuit number you can fly a full "
+        "pattern back to the original runway."
+    )
+
     # ── E2-P3: landing-direction crossover panel ──
     # Walk the envelope and find the lowest successful altitude per side
     # AND the altitude where the sim switches from a reverse landing

@@ -1178,6 +1178,42 @@ def render_landing_map_section(
                 'coords': _track_to_lonlatalt(sa_row['straight_ahead']['trajectory']),
             })
 
+        # ── E2-P4: Decision-ladder example tracks (May 2026) ──
+        # Show one representative ground track per maneuver class so the
+        # pilot can see what 180° vs 540° vs full-circuit actually looks
+        # like over the satellite imagery.
+        try:
+            from analysis.turnback_simulator import find_min_alt_per_maneuver
+            _kind_alts = find_min_alt_per_maneuver(envelope)
+        except Exception:
+            _kind_alts = {}
+        # 180° already shown in solid green above; only add 540° and circuit
+        # to avoid double-drawing the same heart shape.
+        for _kind, _color_hex, _color_rgb, _label in (
+            ('540', '#f59e0b', (245, 158, 11), '540° (orbit + opp rwy)'),
+            ('circuit', '#a855f7', (168, 85, 247), 'Full circuit (same rwy)'),
+        ):
+            _info = _kind_alts.get(_kind)
+            if not _info:
+                continue
+            _sub = _info.get('sub') or {}
+            _traj = _sub.get('trajectory')
+            if not _traj:
+                continue
+            envelope_tracks.append({
+                'label': f"{_label} {_info['side'].upper()} @ {_info['alt']} ft AGL",
+                'color': _color_hex,
+                'weight': 3,
+                'latlons': _track_to_latlons(_traj),
+                'tooltip': f"{_label} from {_info['alt']} ft AGL "
+                           f"({_info['side'].upper()} turn)",
+            })
+            envelope_tracks_3d.append({
+                'label': f"{_label} {_info['side'].upper()} @ {_info['alt']} ft AGL",
+                'color': _color_rgb,
+                'coords': _track_to_lonlatalt(_traj),
+            })
+
     # ── F7-v2: fetch OSM airport perimeter polygon (cached per session) ──
     airport_perimeter = None
     if show_perimeter:

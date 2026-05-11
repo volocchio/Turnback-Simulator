@@ -503,6 +503,61 @@ def _altitude_at_y(trajectory, target_y):
     return None
 
 
+# ---------------------------------------------------------------------------
+#  Maneuver classification (May 2026)
+#
+#  Each successful sim run lands either on the takeoff runway (same-direction
+#  "circuit", landing_direction='original') or on the reciprocal end
+#  ('reverse').  Within the reverse case, the airplane may add a 360° orbit
+#  before landing if it has excess altitude — yielding ~540° of total turn.
+#  The pilot needs to know the MINIMUM altitude that buys each option.
+# ---------------------------------------------------------------------------
+
+MANEUVER_KINDS = ('180', '540', 'circuit')
+
+# Threshold (deg) above which a 'reverse' landing is classified as
+# having included a 360° orbit (i.e., a 540° maneuver).  Pure 180° turns
+# rarely exceed ~210° of net heading change in practice.
+_ORBIT_TURN_THRESHOLD_DEG = 270.0
+
+
+def classify_maneuver(sub: dict) -> str | None:
+    """Classify a single sim sub-result into one of MANEUVER_KINDS.
+
+    Returns None if the sim did not succeed.
+    """
+    if not sub or not sub.get('success'):
+        return None
+    if sub.get('landing_direction') == 'original':
+        return 'circuit'
+    total = float(sub.get('total_turn_deg') or 0.0)
+    return '540' if total >= _ORBIT_TURN_THRESHOLD_DEG else '180'
+
+
+def find_min_alt_per_maneuver(envelope) -> dict:
+    """Walk an envelope (list of altitude rows) and return, for each
+    maneuver kind, the lowest altitude at which at least one side
+    (LEFT or RIGHT) succeeds with that kind.
+
+    Returns a dict ``{kind: {'alt': int, 'side': str, 'sub': dict}}``.
+    Kinds with no successful row are omitted from the dict.
+    """
+    out: dict = {}
+    for row in envelope or []:
+        for side in ('left', 'right'):
+            sub = row.get(side) or {}
+            kind = classify_maneuver(sub)
+            if kind is None:
+                continue
+            if kind not in out or row.get('alt_agl', 0) < out[kind]['alt']:
+                out[kind] = {
+                    'alt': int(row.get('alt_agl', 0)),
+                    'side': side,
+                    'sub': sub,
+                }
+    return out
+
+
 
 
 def simulate_turnback(
