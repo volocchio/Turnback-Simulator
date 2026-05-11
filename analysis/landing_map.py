@@ -668,19 +668,20 @@ def build_satellite_map(
         )
     if _legend_rows:
         _legend_html = (
-            "<div style='position: fixed; bottom: 30px; left: 10px; z-index: 9999; "
-            "background: rgba(255,255,255,0.92); padding: 8px 10px; "
+            "<details style='position: fixed; bottom: 30px; left: 10px; z-index: 9999; "
+            "background: rgba(255,255,255,0.92); padding: 4px 8px; "
             "border: 1px solid #999; border-radius: 4px; "
             "font-family: sans-serif; max-width: 320px; "
             "box-shadow: 0 1px 4px rgba(0,0,0,0.2);'>"
-            "<div style='font-weight:bold;font-size:12px;margin-bottom:4px;'>"
-            "Map legend</div>"
+            "<summary style='font-weight:bold;font-size:11px;cursor:pointer;"
+            "list-style:revert;'>Map legend</summary>"
+            "<div style='margin-top:4px;'>"
             + "".join(_legend_rows) +
-            "</div>"
+            "</div></details>"
         )
         fmap.get_root().html.add_child(folium.Element(_legend_html))
 
-    folium.LayerControl(collapsed=False).add_to(fmap)
+    folium.LayerControl(collapsed=True).add_to(fmap)
     return fmap
 
 
