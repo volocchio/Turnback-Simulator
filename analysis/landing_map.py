@@ -780,9 +780,13 @@ def build_3d_satellite_map(
                 [c[0], c[1], (c[2] if len(c) > 2 else 0.0) * altitude_exaggeration]
                 for c in coords
             ]
+            base_color = list(tr.get("color", (34, 197, 94)))
+            alpha = int(tr.get("alpha", 255))
+            rgba = base_color[:3] + [alpha]
             path_records.append({
                 "path": scaled,
-                "color": list(tr.get("color", (34, 197, 94))),
+                "color": rgba,
+                "width": float(tr.get("width", 5)),
                 "name": tr.get("label", ""),
             })
         if path_records:
@@ -791,8 +795,8 @@ def build_3d_satellite_map(
                 data=path_records,
                 get_path="path",
                 get_color="color",
-                get_width=5,
-                width_min_pixels=3,
+                get_width="width",
+                width_min_pixels=2,
                 pickable=True,
             ))
 
@@ -1141,6 +1145,8 @@ def render_landing_map_section(
                 envelope_tracks_3d.append({
                     'label': f"{_prim} climb-out",
                     'color': (255, 0, 255),
+                    'width': 7,
+                    'alpha': 255,
                     'coords': [
                         [airport.lon, airport.lat, 0.0],
                         _primary_climb_endpoint,
@@ -1189,7 +1195,9 @@ def render_landing_map_section(
             if _cmp_climb_endpoint is not None:
                 envelope_tracks_3d.append({
                     'label': f"{cmp_label} climb-out",
-                    'color': (236, 72, 153),  # pink — distinct from primary magenta
+                    'color': (255, 0, 255),  # same magenta as primary
+                    'width': 3,
+                    'alpha': 130,             # thin + translucent = "alternate"
                     'coords': [
                         [airport.lon, airport.lat, 0.0],
                         _cmp_climb_endpoint,
