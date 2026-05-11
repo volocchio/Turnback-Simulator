@@ -1912,7 +1912,11 @@ def build_turnback_envelope(
         )
 
     if max_alt is None:
-        max_alt = int(critical_alt + 400)
+        # Auto-ceiling: extend high enough that the Decision Ladder can
+        # discover 540° (orbit) and full-circuit options, not just 180°.
+        # An orbit needs ~3× the altitude of a 180°; a full circuit
+        # needs more.  Floor at 2,000 ft AGL for trainer-class profiles.
+        max_alt = int(max(critical_alt * 3.5 + 200, 2000))
     max_alt = max(max_alt, int(critical_alt + 200))
 
     envelope = []
