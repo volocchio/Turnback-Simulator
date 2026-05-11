@@ -215,7 +215,30 @@ def build_pre_brief(res: dict, crit_result: dict | None,
     else:
         s4 = ""
 
-    parts = [p for p in (s1, s2, s3, s4) if p]
+    # ── Sentence 5: climb-steering recommendation (only if a comparison ran) ──
+    s5 = ""
+    primary_steering = res.get('climb_steering')  # 'track' or 'heading'
+    cmp = res.get('comparison') or {}
+    cmp_crit = cmp.get('critical_alt')
+    if primary_steering and cmp_crit and crit_min > 0 and abs(crosswind_kt or 0) >= 1:
+        prim_label = {'track': 'track-hold (crab into the wind)',
+                       'heading': 'heading-hold (let it drift downwind)'}.get(primary_steering, primary_steering)
+        alt_steering = 'heading' if primary_steering == 'track' else 'track'
+        alt_label = {'track': 'track-hold (crab)',
+                     'heading': 'heading-hold (drift)'}[alt_steering]
+        delta = int(round(cmp_crit - crit_min))  # positive ⇒ primary is lower (better)
+        if abs(delta) < 5:
+            s5 = (f"Climb steering: {prim_label} and {alt_label} give the same "
+                  f"turnback altitude in this wind — pick whichever feels natural.")
+        elif delta > 0:
+            s5 = (f"Climb steering: fly {prim_label} — it lowers the turnback minimum "
+                  f"by {delta} ft vs {alt_label}.")
+        else:
+            s5 = (f"Climb steering: {alt_label} would actually be {abs(delta)} ft "
+                  f"better here than the {prim_label} you're set up for — "
+                  f"consider switching modes in the sidebar.")
+
+    parts = [p for p in (s1, s2, s3, s4, s5) if p]
     return "  ".join(parts)
 
 
