@@ -1083,77 +1083,76 @@ def render_landing_map_section(
                 pts.append([lon2, lat2, z_ft / _FT_PER_M])
             return pts
 
-        # Find the row matching the critical altitude (or closest at-or-above)
-        crit_row = None
+        # Find the per-side critical altitude (lowest alt at which that side
+        # succeeds).  Crosswind makes left vs right asymmetric, so we want
+        # the legend to show DIFFERENT altitudes for each side rather than
+        # collapsing to a single shared row.
+        crit_row_per_side = {'left': None, 'right': None}
         for row in envelope:
-            if row.get('alt_agl', 0) >= target_alt and (
-                row.get('left', {}).get('success') or row.get('right', {}).get('success')
-            ):
-                crit_row = row
-                break
-        if crit_row is None and envelope:
-            # Fallback: highest-alt successful row
-            for row in reversed(envelope):
-                if row.get('left', {}).get('success') or row.get('right', {}).get('success'):
-                    crit_row = row
-                    break
+            for side in ('left', 'right'):
+                if crit_row_per_side[side] is not None:
+                    continue
+                sub = row.get(side) or {}
+                if sub.get('success') and sub.get('trajectory'):
+                    crit_row_per_side[side] = row
 
-        if crit_row:
+        if crit_row_per_side['left'] or crit_row_per_side['right']:
             _prim = primary_label or "Turnback"
             for side, color, label in (
                 ('left',  '#16a34a', f'{_prim} LEFT turn'),
                 ('right', '#22c55e', f'{_prim} RIGHT turn'),
             ):
-                sub = crit_row.get(side) or {}
+                row = crit_row_per_side[side]
+                if not row:
+                    continue
+                sub = row.get(side) or {}
                 if sub.get('success') and sub.get('trajectory'):
                     envelope_tracks.append({
-                        'label': f"{label} @ {crit_row['alt_agl']} ft AGL",
+                        'label': f"{label} @ {row['alt_agl']} ft AGL",
                         'color': color,
                         'weight': 4,
                         'latlons': _track_to_latlons(sub['trajectory']),
-                        'tooltip': f"{label} from {crit_row['alt_agl']} ft AGL",
+                        'tooltip': f"{label} from {row['alt_agl']} ft AGL",
                     })
                     envelope_tracks_3d.append({
-                        'label': f"{label} @ {crit_row['alt_agl']} ft AGL",
+                        'label': f"{label} @ {row['alt_agl']} ft AGL",
                         'color': (22, 163, 74) if side == 'left' else (34, 197, 94),
                         'coords': _track_to_lonlatalt(sub['trajectory']),
                     })
 
         # ── E2-P2: comparison-envelope tracks (alternate climb steering) ──
+        # Per-side critical altitude (same asymmetric-crosswind fix as primary).
         if comparison_envelope and comparison_critical_alt > 0:
             cmp_label = comparison_label or "Alternate climb steering"
-            cmp_target_alt = comparison_critical_alt
-            cmp_row = None
+            cmp_row_per_side = {'left': None, 'right': None}
             for row in comparison_envelope:
-                if row.get('alt_agl', 0) >= cmp_target_alt and (
-                    row.get('left', {}).get('success') or row.get('right', {}).get('success')
-                ):
-                    cmp_row = row
-                    break
-            if cmp_row is None and comparison_envelope:
-                for row in reversed(comparison_envelope):
-                    if (row.get('left', {}).get('success')
-                            or row.get('right', {}).get('success')):
-                        cmp_row = row
-                        break
-            if cmp_row:
-                for side, label_side in (('left', 'LEFT'), ('right', 'RIGHT')):
-                    sub = cmp_row.get(side) or {}
+                for side in ('left', 'right'):
+                    if cmp_row_per_side[side] is not None:
+                        continue
+                    sub = row.get(side) or {}
                     if sub.get('success') and sub.get('trajectory'):
-                        envelope_tracks.append({
-                            'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
-                            'color': '#facc15',  # gold
-                            'weight': 3,
-                            'dash_array': '8,6',
-                            'latlons': _track_to_latlons(sub['trajectory']),
-                            'tooltip': f"{cmp_label} {label_side} from "
-                                       f"{cmp_row['alt_agl']} ft AGL",
-                        })
-                        envelope_tracks_3d.append({
-                            'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
-                            'color': (250, 204, 21),
-                            'coords': _track_to_lonlatalt(sub['trajectory']),
-                        })
+                        cmp_row_per_side[side] = row
+
+            for side, label_side in (('left', 'LEFT'), ('right', 'RIGHT')):
+                cmp_row = cmp_row_per_side[side]
+                if not cmp_row:
+                    continue
+                sub = cmp_row.get(side) or {}
+                if sub.get('success') and sub.get('trajectory'):
+                    envelope_tracks.append({
+                        'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
+                        'color': '#facc15',  # gold
+                        'weight': 3,
+                        'dash_array': '8,6',
+                        'latlons': _track_to_latlons(sub['trajectory']),
+                        'tooltip': f"{cmp_label} {label_side} from "
+                                   f"{cmp_row['alt_agl']} ft AGL",
+                    })
+                    envelope_tracks_3d.append({
+                        'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
+                        'color': (250, 204, 21),
+                        'coords': _track_to_lonlatalt(sub['trajectory']),
+                    })
 
         # Straight-ahead-max track (engineless landing along centerline)
         sa_row = None
