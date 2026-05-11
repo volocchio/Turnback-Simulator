@@ -1108,6 +1108,7 @@ def render_landing_map_section(
 
         if crit_row_per_side['left'] or crit_row_per_side['right']:
             _prim = primary_label or "Turnback"
+            _primary_climb_endpoint = None  # captured below for the 3-D climb line
             for side, color, label in (
                 ('left',  '#16a34a', f'{_prim} LEFT turn'),
                 ('right', '#22c55e', f'{_prim} RIGHT turn'),
@@ -1117,6 +1118,9 @@ def render_landing_map_section(
                     continue
                 sub = row.get(side) or {}
                 if sub.get('success') and sub.get('trajectory'):
+                    _coords3d = _track_to_lonlatalt(sub['trajectory'])
+                    if _coords3d and _primary_climb_endpoint is None:
+                        _primary_climb_endpoint = _coords3d[0]
                     envelope_tracks.append({
                         'label': f"{label} @ {row['alt_agl']} ft AGL",
                         'color': color,
@@ -1127,8 +1131,21 @@ def render_landing_map_section(
                     envelope_tracks_3d.append({
                         'label': f"{label} @ {row['alt_agl']} ft AGL",
                         'color': (22, 163, 74) if side == 'left' else (34, 197, 94),
-                        'coords': _track_to_lonlatalt(sub['trajectory']),
+                        'coords': _coords3d,
                     })
+
+            # Magenta climb-out path (3-D only) — airport ground level up
+            # to the engine-failure point at critical altitude. Mirrors the
+            # 2-D magenta climb line. (May 2026)
+            if _primary_climb_endpoint is not None:
+                envelope_tracks_3d.append({
+                    'label': f"{_prim} climb-out",
+                    'color': (255, 0, 255),
+                    'coords': [
+                        [airport.lon, airport.lat, 0.0],
+                        _primary_climb_endpoint,
+                    ],
+                })
 
         # ── E2-P2: comparison-envelope tracks (alternate climb steering) ──
         # Per-side critical altitude (same asymmetric-crosswind fix as primary).
@@ -1143,12 +1160,16 @@ def render_landing_map_section(
                     if sub.get('success') and sub.get('trajectory'):
                         cmp_row_per_side[side] = row
 
+            _cmp_climb_endpoint = None
             for side, label_side in (('left', 'LEFT'), ('right', 'RIGHT')):
                 cmp_row = cmp_row_per_side[side]
                 if not cmp_row:
                     continue
                 sub = cmp_row.get(side) or {}
                 if sub.get('success') and sub.get('trajectory'):
+                    _coords3d_cmp = _track_to_lonlatalt(sub['trajectory'])
+                    if _coords3d_cmp and _cmp_climb_endpoint is None:
+                        _cmp_climb_endpoint = _coords3d_cmp[0]
                     envelope_tracks.append({
                         'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
                         'color': '#facc15',  # gold
@@ -1161,8 +1182,34 @@ def render_landing_map_section(
                     envelope_tracks_3d.append({
                         'label': f"{cmp_label} {label_side} @ {cmp_row['alt_agl']} ft AGL",
                         'color': (250, 204, 21),
-                        'coords': _track_to_lonlatalt(sub['trajectory']),
+                        'coords': _coords3d_cmp,
                     })
+
+            # Magenta-pink climb-out path for the alternate steering mode.
+            if _cmp_climb_endpoint is not None:
+                envelope_tracks_3d.append({
+                    'label': f"{cmp_label} climb-out",
+                    'color': (236, 72, 153),  # pink — distinct from primary magenta
+                    'coords': [
+                        [airport.lon, airport.lat, 0.0],
+                        _cmp_climb_endpoint,
+                    ],
+                })
+
+            # Magenta-pink climb-out path for the alternate steering mode.
+            try:
+                _ep = _cmp_climb_endpoint
+            except NameError:
+                _ep = None
+            if _ep is not None:
+                envelope_tracks_3d.append({
+                    'label': f"{cmp_label} climb-out",
+                    'color': (236, 72, 153),  # pink — distinct from primary magenta
+                    'coords': [
+                        [airport.lon, airport.lat, 0.0],
+                        _ep,
+                    ],
+                })
 
         # Straight-ahead-max track (engineless landing along centerline)
         sa_row = None
