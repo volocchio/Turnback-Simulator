@@ -140,6 +140,85 @@ def _recommended_turn_direction(critical_alt_left: float,
                      f"{int(round(critical_alt_left))} ft AGL for LEFT.")
 
 
+def build_pre_brief(res: dict, crit_result: dict | None,
+                    safety_margin_factor: float = 1.25) -> str:
+    """One-paragraph plain-English pre-takeoff brief.
+
+    Designed to be read aloud as a self-brief on the runway hold-short.
+    Same string is shown in the UI banner AND embedded in the printed
+    Takeoff Data Card so the pilot's spoken brief matches the paperwork.
+    """
+    cfg = res.get('config')
+    ac_key = res.get('ac_key', ('—', ''))
+    if isinstance(ac_key, (tuple, list)):
+        _parts = [str(p) for p in ac_key if p and str(p) != 'Flatwing']
+        ac_label = " ".join(_parts) if _parts else str(ac_key[0])
+    else:
+        ac_label = str(ac_key)
+
+    airport = res.get('airport_ident') or "—"
+    runway = res.get('runway_ident') or "—"
+    field_elev = res.get('field_elev', 0) or 0
+
+    wind_speed = res.get('wind_speed', 0) or 0
+    wind_from_true = res.get('wind_from_true')
+    wind_from_deg = res.get('wind_from_deg', 0) or 0
+    headwind_kt = res.get('headwind_kt')
+    crosswind_kt = res.get('crosswind_kt')
+
+    crit_left = res.get('critical_alt_left', 0) or 0
+    crit_right = res.get('critical_alt_right', 0) or 0
+    sa_max = res.get('straight_ahead_max_alt', 0) or 0
+    crit_min = min(c for c in (crit_left, crit_right) if c > 0) if max(crit_left, crit_right) > 0 else 0
+    crit_recommend = crit_min * safety_margin_factor
+
+    rec_dir, _ = _recommended_turn_direction(crit_left, crit_right, wind_from_deg, wind_speed)
+
+    # ── Sentence 1: scenario ──
+    if wind_speed > 0 and wind_from_true is not None:
+        wind_phrase = f"wind {int(round(wind_from_true)):03d}° at {int(round(wind_speed))} kt"
+        if crosswind_kt is not None and abs(crosswind_kt) >= 1:
+            xw_side = "right" if crosswind_kt > 0 else "left"
+            wind_phrase += f" ({abs(crosswind_kt):.0f}-kt {xw_side} crosswind)"
+    elif wind_speed > 0:
+        wind_phrase = f"wind {int(round(wind_speed))} kt"
+    else:
+        wind_phrase = "calm wind"
+
+    s1 = (f"Departing {airport} runway {runway} "
+          f"(field elev {int(round(field_elev)):,} ft MSL) in the {ac_label}, "
+          f"{wind_phrase}.")
+
+    # ── Sentence 2: straight-ahead band ──
+    if sa_max > 0:
+        s2 = (f"On engine failure below {int(round(sa_max)):,} ft AGL, "
+              f"land straight ahead — there is not enough altitude to turn back.")
+    else:
+        s2 = "On any engine failure during initial climb, land straight ahead."
+
+    # ── Sentence 3: turnback minimum ──
+    if crit_min > 0 and rec_dir in ("LEFT", "RIGHT"):
+        s3 = (f"At or above {int(round(crit_recommend)):,} ft AGL "
+              f"({int(round(crit_recommend + field_elev)):,} ft MSL on the altimeter, "
+              f"{safety_margin_factor:.2f}× safety factor), "
+              f"the turnback is feasible — favor a {rec_dir} turn "
+              f"(needs {int(round(crit_min)):,} ft AGL bare minimum).")
+    else:
+        s3 = "No turnback solution found at any altitude in the modeled envelope."
+
+    # ── Sentence 4: critical-zone warning ──
+    if sa_max > 0 and crit_min > 0 and sa_max + 50 < crit_min:
+        s4 = (f"Between {int(round(sa_max)):,} and {int(round(crit_min)):,} ft AGL "
+              f"is the no-good-options band — climb through it as fast as possible.")
+    elif sa_max > 0 and crit_min > 0:
+        s4 = "Straight-ahead and turnback coverage overlap — every altitude has an option."
+    else:
+        s4 = ""
+
+    parts = [p for p in (s1, s2, s3, s4) if p]
+    return "  ".join(parts)
+
+
 def build_takeoff_data_card(res: dict, crit_result: dict | None,
                              safety_margin_factor: float = 1.25) -> str:
     """Render the TOLD card as a self-contained, printable HTML document."""
@@ -295,6 +374,9 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
       .hero .hsub { font-size: 9pt; color: #cfe1f0; }
       .hero .hkey { font-size: 24pt; font-weight: bold; margin-top: 4px; }
       .hero .hkeysub { font-size: 9pt; color: #cfe1f0; }
+      .prebrief { background: #fffbe6; border: 1px solid #f0c000; border-left: 5px solid #d4a000; padding: 8px 12px; margin: 4px 0 12px 0; }
+      .prebrief .pblabel { font-size: 8pt; font-weight: bold; color: #8a6d00; letter-spacing: 0.5px; margin-bottom: 4px; }
+      .prebrief .pbtext { font-size: 11pt; color: #1a1a1a; line-height: 1.4; }
       .warn { background: #fff4e5; border-left: 4px solid #d84315; padding: 6px 10px; font-size: 10pt; }
       .ok { background: #e8f5e9; border-left: 4px solid #2e7d32; padding: 6px 10px; font-size: 10pt; }
       .muted { color: #888; font-style: italic; font-size: 9pt; }
@@ -337,6 +419,11 @@ def build_takeoff_data_card(res: dict, crit_result: dict | None,
       <div class='hsub'>Weight {_fmt_int(weight, ' lb')} · Field {_fmt_int(field_elev, ' ft MSL')} · ISA{_fmt_dec(isa_dev, 0, '°C') if isa_dev >= 0 else _fmt_dec(isa_dev, 0, '°C')} · Wind {_fmt_int(wind_speed, ' kt')} from {_fmt_int(wind_from_true if wind_from_true is not None else wind_from_deg, '°')}</div>
       <div class='hkey'>{_fmt_int(crit_recommend, ' ft AGL')}</div>
       <div class='hkeysub'>Recommended turnback minimum (× {safety_margin_factor:.2f} safety factor) · {e(rec_dir)} turn · {_fmt_int(crit_recommend_msl, ' ft MSL')} on the altimeter</div>
+    </div>
+
+    <div class='prebrief'>
+      <div class='pblabel'>SELF-BRIEF (read aloud at the hold-short line)</div>
+      <div class='pbtext'>{e(build_pre_brief(res, crit_result, safety_margin_factor))}</div>
     </div>
 
     <h2>Aircraft &amp; Conditions</h2>

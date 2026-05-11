@@ -24,7 +24,7 @@ from analysis.turnback_simulator import (
     find_critical_altitude,
     _select_vbg_override,
 )
-from analysis.data_card import build_takeoff_data_card, build_takeoff_data_card_pdf
+from analysis.data_card import build_takeoff_data_card, build_takeoff_data_card_pdf, build_pre_brief
 
 # ── Page config for standalone mode ──
 try:
@@ -1275,6 +1275,30 @@ def run_turnback_page():
         if item['left']['turn_radius_ft'] < 1e9:
             turn_radius = item['left']['turn_radius_ft']
             break
+
+    # ── Pre-brief banner (May 2026) ──
+    # Same one-paragraph self-brief that gets embedded in the printed
+    # Takeoff Data Card.  Read aloud at the hold-short line.
+    _crit_for_brief = None
+    for _item in envelope:
+        if _item.get('is_critical_left') or _item.get('is_critical_right'):
+            _crit_for_brief = _item.get('left') or _item.get('right')
+            break
+    try:
+        _brief_text = build_pre_brief(res, _crit_for_brief, safety_margin_factor)
+        st.markdown(
+            f"<div style='background:#fffbe6;border:1px solid #f0c000;"
+            f"border-left:5px solid #d4a000;padding:10px 14px;margin:6px 0 14px 0;"
+            f"border-radius:4px;'>"
+            f"<div style='font-size:11px;font-weight:bold;color:#8a6d00;"
+            f"letter-spacing:0.5px;margin-bottom:4px;'>"
+            f"📢 SELF-BRIEF — read aloud at the hold-short line</div>"
+            f"<div style='font-size:15px;color:#1a1a1a;line-height:1.5;'>"
+            f"{_brief_text}</div></div>",
+            unsafe_allow_html=True,
+        )
+    except Exception as _e:  # pragma: no cover
+        st.caption(f"(Pre-brief unavailable: {_e})")
 
     # ── Key metrics ──
     col1, col2, col3, col4, col5 = st.columns(5)
