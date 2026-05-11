@@ -837,18 +837,29 @@ def run_turnback_page():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Prop Drag")
 
-    # Auto-detect a sensible default prop type from the aircraft.  Turboprops
-    # and twin-engine CS pistons (Mustang/CJ family aren't single-engine, but
-    # turbines + retractable singles like the Meridian) default to variable.
+    # Auto-detect a sensible default prop type from the aircraft.  Curated
+    # list of variable-pitch / constant-speed / feathering installs in the
+    # AIRCRAFT_CONFIG library — covers all turboprops, complex retractables,
+    # and high-perf pistons.  Anything not in this set defaults to fixed.
     _ac_name = ac_key[0] if isinstance(ac_key, (tuple, list)) else str(ac_key)
     _vp_default_models = {
-        'Meridian',        # PT6 turboprop, feathering
-        'TBM700', 'TBM850', 'TBM900', 'TBM930', 'TBM940', 'TBM960',
+        # Single-engine turboprops (all feathering)
+        'Meridian', 'M600', 'M700',
+        'TBM700', 'TBM850', 'TBM900', 'TBM910', 'TBM930', 'TBM940', 'TBM960',
         'PC-12', 'PC12',
-        'Bonanza', 'A36', 'V35',
-        'Mooney', 'M20',
+        'Denali',
+        'E1000',
+        'Kodiak100', 'Kodiak900',
+        'C208', 'C208B', 'C208EX',
+        # Twin-engine turboprops
+        'DHC6', 'ATR42', 'ATR72', 'Q300', 'Q400',
+        # Complex piston singles (constant-speed)
+        'A36', 'V35', 'Bonanza',
+        'M20V', 'Mooney',
         'C182RG', 'C210',
         'SR22', 'SR22T',
+        'TTx',
+        'Mirage',
     }
     _default_prop_type = 'variable' if _ac_name in _vp_default_models else 'fixed'
 
