@@ -2013,12 +2013,8 @@ def run_turnback_page():
                      "Print → Save as PDF for full styling fidelity.",
             )
         with dc_cols[2]:
-            show_card = st.toggle(
-                "Preview card in app", value=False,
-                help="Render the printable card here in the page.",
-            )
-        if show_card:
-            st.components.v1.html(card_html, height=1400, scrolling=True)
+            st.caption("Preview shown below ⬇")
+        st.components.v1.html(card_html, height=1400, scrolling=True)
     except Exception as e:
         st.error(f"Could not build data card: {e}")
 
