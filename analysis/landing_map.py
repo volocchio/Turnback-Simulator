@@ -448,6 +448,7 @@ def build_satellite_map(
         name='OpenStreetMap',
         overlay=False,
         control=True,
+        show=False,
     ).add_to(fmap)
 
     # Airport perimeter polygon (Charlie #F7-v2) — OSM aeroway=aerodrome.
