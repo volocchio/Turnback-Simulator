@@ -856,10 +856,12 @@ def run_turnback_page():
         # Complex piston singles (constant-speed)
         'A36', 'V35', 'Bonanza',
         'M20V', 'Mooney',
-        'C182RG', 'C210',
+        'C182RG', 'C182T', 'C210',
         'SR22', 'SR22T',
         'TTx',
         'Mirage',
+        # Utility / backcountry pistons with CS prop (Hartzell on most A-1B/C)
+        'Husky',
     }
     _default_prop_type = 'variable' if _ac_name in _vp_default_models else 'fixed'
 
