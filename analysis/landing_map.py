@@ -424,14 +424,23 @@ def build_satellite_map(
     fmap = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=zoom,
+        tiles=None,
+        control_scale=True,
+    )
+
+    # Esri World Imagery — default basemap, named cleanly for the layer
+    # control (passing the raw URL via folium.Map(tiles=...) makes the URL
+    # show up as the layer label, which is ugly).
+    folium.TileLayer(
         tiles=('https://server.arcgisonline.com/ArcGIS/rest/services/'
                'World_Imagery/MapServer/tile/{z}/{y}/{x}'),
         attr='Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, '
              'and the GIS User Community',
-        name='Esri Satellite',
+        name='Satellite',
         max_zoom=19,
-        control_scale=True,
-    )
+        overlay=False,
+        control=True,
+    ).add_to(fmap)
 
     # Alternate basemap available via LayerControl (Esri remains default).
     folium.TileLayer(
