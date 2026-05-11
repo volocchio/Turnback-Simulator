@@ -209,3 +209,23 @@ def wind_components(wind_from_deg_true: float, wind_speed_kt: float,
     headwind = wind_speed_kt * math.cos(rel_rad)
     crosswind = wind_speed_kt * math.sin(rel_rad)
     return headwind, crosswind, rel
+
+
+# ── Pre-warm (May 2026) ───────────────────────────────────────────────────────
+# Parse the parquet files in a background thread at module import so the first
+# user query doesn't pay the ~0.1 s cold-read cost.  Cheap and safe — both
+# loaders are idempotent and cached after first call.
+def _prewarm() -> None:  # pragma: no cover
+    try:
+        load_airports()
+        _load_runways_raw()
+    except Exception:
+        pass
+
+
+if os.environ.get("TURNBACK_NO_PREWARM") != "1":
+    try:
+        import threading
+        threading.Thread(target=_prewarm, name="airport-db-prewarm", daemon=True).start()
+    except Exception:  # pragma: no cover
+        pass
