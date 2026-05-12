@@ -1328,6 +1328,49 @@ def run_turnback_page():
     else:
         col5.metric("Turn Radius", "—")
 
+    # ── LEFT vs RIGHT delta callout (May 2026) ──
+    # Plain-English read of which side wins, by how much, and how that
+    # compares to the standard "always turn into the wind" teaching.
+    if (critical_alt_left and critical_alt_right
+            and critical_alt_left > 0 and critical_alt_right > 0):
+        _delta_lr = abs(critical_alt_left - critical_alt_right)
+        _winner = 'LEFT' if critical_alt_left < critical_alt_right else 'RIGHT'
+        _loser = 'RIGHT' if _winner == 'LEFT' else 'LEFT'
+        _wind_from = float(res.get('wind_from_deg', 0) or 0)
+        _rwy_hdg = float(res.get('runway_heading_true', 0) or 0)
+        _xw = float(res.get('crosswind_kt', 0) or 0)  # +right / –left
+        # Determine which turn direction is "into the wind"
+        _into_wind = None
+        if abs(_xw) >= 1:
+            _into_wind = 'LEFT' if _xw > 0 else 'RIGHT'  # right xwind → turning LEFT goes into wind
+        if _delta_lr < 5:
+            _msg = (f"⚖️ **LEFT vs RIGHT:** essentially tied "
+                    f"({critical_alt_left:,.0f} ft vs {critical_alt_right:,.0f} ft "
+                    f"AGL — Δ {_delta_lr:.0f} ft).  Either turn works.")
+            st.info(_msg)
+        elif _into_wind is None:
+            _msg = (f"⚖️ **LEFT vs RIGHT:** **{_winner}** turn wins by "
+                    f"**{_delta_lr:,.0f} ft** ({critical_alt_left:,.0f} vs "
+                    f"{critical_alt_right:,.0f} ft AGL).  No crosswind to bias it.")
+            st.success(_msg)
+        elif _winner == _into_wind:
+            _msg = (f"⚖️ **LEFT vs RIGHT:** **{_winner}** turn wins by "
+                    f"**{_delta_lr:,.0f} ft** ({critical_alt_left:,.0f} vs "
+                    f"{critical_alt_right:,.0f} ft AGL).  This matches the standard "
+                    f"teaching — turn **into** the {abs(_xw):.0f}-kt crosswind.")
+            st.success(_msg)
+        else:
+            _msg = (f"⚖️ **LEFT vs RIGHT:** the math picks **{_winner}** "
+                    f"(turn *away* from the {abs(_xw):.0f}-kt crosswind) by "
+                    f"**{_delta_lr:,.0f} ft** "
+                    f"({critical_alt_left:,.0f} vs {critical_alt_right:,.0f} ft AGL).  "
+                    f"This **disagrees** with the standard 'turn into the wind' "
+                    f"teaching — likely because of runway geometry, smart-aim exit, "
+                    f"or the crosswind being small relative to glide speed.  "
+                    f"Either side is flyable; the {_into_wind} turn needs the extra "
+                    f"{_delta_lr:,.0f} ft.")
+            st.warning(_msg)
+
     # ── E2-P2: climb-steering comparison callout ──
     _cmp = res.get('comparison')
     if _cmp:
