@@ -2161,24 +2161,26 @@ def run_turnback_page():
         "at a time, holding everything else fixed.  They turn the *single number* "
         "above into an **education about which knobs matter most.**"
     )
-    sens_cols = st.columns(2)
-    do_bank_sens = sens_cols[0].button(
-        "Run bank-angle sensitivity",
-        help="Re-runs the critical-altitude search across 25°/30°/35°/40°/45°/50°/55° "
-             "of bank, holding all other inputs fixed.  Shows how steeper bank "
-             "trades altitude needed (smaller turn) against stall-margin loss.",
-        key="run_bank_sens",
+    # Auto-run sensitivities by default — but cache by an input signature so
+    # we don't re-sweep on every slider tweak.  Both sweeps are heavier than the
+    # primary sim (each is ~7-12 additional critical-altitude searches), so we
+    # run them once per unique combination of inputs and reuse the result.
+    _sens_sig = (
+        config.name, weight, airspeed, flap_setting, field_elev, isa_dev,
+        wind_speed, wind_from_deg, wind_1000_kt, wind_2000_kt, wind_3000_kt,
+        runway_length, liftoff_distance, aim_point, flap_on_return,
+        speed_mode, prop_state, gear_down, gear_retract_time_s,
+        intersection_offset_ft, vbg_clean_kias, vbg_geardown_kias,
+        vbg_landing_kias, touchdown_margin_ft, runway_friction, climb_steering,
     )
-    do_reaction_sens = sens_cols[1].button(
-        "Run reaction-time sensitivity",
-        help="Re-runs the critical-altitude search across 0/2/3/5/7/10 sec of "
-             "reaction time.  Most pilots underestimate this — every second of "
-             "delay costs hundreds of feet in cold-startle scenarios.",
-        key="run_reaction_sens",
-    )
+    _bank_sig = _sens_sig + ('bank',)
+    _rt_sig = _sens_sig + ('rt', reaction_time)
+    do_bank_sens = st.session_state.get('bank_sens_sig') != _bank_sig
+    do_reaction_sens = st.session_state.get('reaction_sens_sig') != _rt_sig
 
     # Persist results so the chart stays after a Streamlit rerun
     if do_bank_sens:
+        st.session_state['bank_sens_sig'] = _bank_sig
         bank_angles_sweep = [25, 30, 35, 40, 45, 50, 55]
         crit_by_bank_left = []
         crit_by_bank_right = []
@@ -2294,6 +2296,7 @@ def run_turnback_page():
         )
 
     if do_reaction_sens:
+        st.session_state['reaction_sens_sig'] = _rt_sig
         reaction_sweep = [0, 2, 3, 5, 7, 10]
         crit_by_rt = []
         with st.spinner("Sweeping reaction times..."):
