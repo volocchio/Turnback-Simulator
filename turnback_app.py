@@ -66,7 +66,7 @@ def run_turnback_page():
     """Render the Turnback Simulator page."""
 
     # ── Hero splash ──
-    st.markdown(
+    st.html(
         textwrap.dedent("""\
         <style>
           .tb-hero {
@@ -252,11 +252,10 @@ def run_turnback_page():
           </div>
         </div>
         """),
-        unsafe_allow_html=True,
     )
 
     with st.expander("How it works — the physics in 30 seconds"):
-        st.markdown(
+        st.html(
             textwrap.dedent("""\
             <div class="tb-howbox"><div>
             After engine failure thrust = 0, so the descent gradient is
@@ -271,7 +270,6 @@ def run_turnback_page():
             return) above it.
             </div></div>
             """),
-            unsafe_allow_html=True,
         )
 
     # ── Sidebar inputs ──
