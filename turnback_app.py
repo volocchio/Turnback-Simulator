@@ -64,19 +64,214 @@ st.markdown(
 def run_turnback_page():
     """Render the Turnback Simulator page."""
 
-    st.title("Turnback Simulator — The Impossible Turn")
-    st.markdown("""
-    Simulates engine failure after takeoff and the gliding turn back to the runway.
-    The **heart-shaped envelope** shows the ground track at each failure altitude:
-    incomplete at low altitudes (crash before completing the turn) and complete
-    above the **critical altitude** (safe return).
+    # ── Hero splash ──
+    st.markdown(
+        """
+        <style>
+          .tb-hero {
+              position: relative;
+              border-radius: 18px;
+              padding: 34px 40px 28px 40px;
+              margin-bottom: 18px;
+              background: linear-gradient(135deg, #0b1a2b 0%, #143a5c 45%, #1f6f9c 100%);
+              color: #f4f8fb;
+              overflow: hidden;
+              box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+          }
+          .tb-hero h1 {
+              font-size: 2.6rem;
+              line-height: 1.1;
+              margin: 0 0 6px 0;
+              font-weight: 800;
+              letter-spacing: -0.5px;
+              color: #ffffff;
+          }
+          .tb-hero .tb-tag {
+              display: inline-block;
+              font-size: 0.85rem;
+              letter-spacing: 2px;
+              text-transform: uppercase;
+              color: #ffd166;
+              font-weight: 700;
+              margin-bottom: 10px;
+          }
+          .tb-hero .tb-sub {
+              font-size: 1.18rem;
+              line-height: 1.5;
+              max-width: 720px;
+              color: #dbe7f0;
+              margin: 6px 0 0 0;
+          }
+          .tb-hero .tb-sub b { color: #ffd166; }
+          .tb-hero-grid {
+              display: grid;
+              grid-template-columns: 1fr 320px;
+              gap: 24px;
+              align-items: center;
+          }
+          @media (max-width: 900px) {
+              .tb-hero-grid { grid-template-columns: 1fr; }
+              .tb-hero h1 { font-size: 2.0rem; }
+          }
+          .tb-art { width: 100%; height: auto; }
+          /* Climb-out path draw-on animation */
+          @keyframes tb-draw { to { stroke-dashoffset: 0; } }
+          @keyframes tb-fly  { to { offset-distance: 100%; } }
+          @keyframes tb-fade { from { opacity: 0; } to { opacity: 1; } }
+          .tb-climb {
+              stroke-dasharray: 700;
+              stroke-dashoffset: 700;
+              animation: tb-draw 2.6s ease-out 0.2s forwards;
+          }
+          .tb-turn {
+              stroke-dasharray: 500;
+              stroke-dashoffset: 500;
+              animation: tb-draw 2.4s ease-out 2.6s forwards;
+          }
+          .tb-glide {
+              stroke-dasharray: 500;
+              stroke-dashoffset: 500;
+              animation: tb-draw 2.0s ease-out 4.6s forwards;
+          }
+          .tb-plane {
+              offset-path: path("M 60,230 L 175,95 C 240,75 300,135 280,195 L 145,235");
+              offset-distance: 0%;
+              offset-rotate: auto;
+              animation: tb-fly 6.6s ease-in-out 0.2s forwards;
+          }
+          .tb-spark { animation: tb-fade 0.4s ease-out 2.4s both; }
+          .tb-howbox > div {
+              background: #f3f6f9;
+              border-left: 4px solid #1f6f9c;
+              padding: 14px 18px;
+              border-radius: 6px;
+              font-size: 1.02rem;
+              line-height: 1.55;
+          }
+        </style>
 
-    *Physics*: zero thrust after engine failure. Descent gradient = −D/W.
-    In a banked turn the wing must produce more lift to support the load
-    factor n_z = 1/cos(φ), raising C_L. Since induced drag grows as C_L²,
-    steeper banks dramatically increase total drag and sink rate.
-    Stall speed also rises by √n_z, narrowing the safe speed margin.
-    """)
+        <div class="tb-hero">
+          <div class="tb-hero-grid">
+            <div>
+              <div class="tb-tag">✈ EAA · McSpadden Project</div>
+              <h1>The Impossible Turn</h1>
+              <p class="tb-sub">
+                Engine quits on climb-out. You have <b>seconds</b> to decide:
+                land ahead, or turn back. This simulator computes the
+                <b>critical altitude</b> for <i>your</i> airplane, weight,
+                wind, and runway — so the decision isn't a guess.
+              </p>
+            </div>
+            <div>
+              <svg class="tb-art" viewBox="0 0 360 280" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <defs>
+                  <linearGradient id="tb-sky" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#1f6f9c" stop-opacity="0"/>
+                    <stop offset="100%" stop-color="#0b1a2b" stop-opacity="0.0"/>
+                  </linearGradient>
+                  <linearGradient id="tb-ground" x1="0" y1="0" x2="1" y2="0.6">
+                    <stop offset="0%" stop-color="#1a3a2a"/>
+                    <stop offset="100%" stop-color="#0e2218"/>
+                  </linearGradient>
+                  <marker id="tb-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+                          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M0,0 L10,5 L0,10 z" fill="#ffd166"/>
+                  </marker>
+                </defs>
+
+                <!-- Isometric ground plane -->
+                <polygon points="20,235 280,235 340,265 80,265"
+                         fill="url(#tb-ground)" stroke="#2a5240" stroke-width="1"/>
+                <!-- ground grid -->
+                <g stroke="#2a5240" stroke-width="0.6" opacity="0.8">
+                  <line x1="80"  y1="265" x2="20"  y2="235"/>
+                  <line x1="145" y1="265" x2="85"  y2="235"/>
+                  <line x1="210" y1="265" x2="150" y2="235"/>
+                  <line x1="275" y1="265" x2="215" y2="235"/>
+                  <line x1="340" y1="265" x2="280" y2="235"/>
+                  <line x1="50"  y1="250" x2="310" y2="250"/>
+                </g>
+
+                <!-- Runway in isometric perspective -->
+                <polygon points="40,247 250,247 268,257 58,257"
+                         fill="#1a1a1a" stroke="#ffd166" stroke-width="1.2"/>
+                <line x1="60"  y1="252" x2="248" y2="252"
+                      stroke="#ffd166" stroke-width="1.2" stroke-dasharray="6 5"/>
+                <text x="48" y="244" fill="#ffd166" font-family="Segoe UI, sans-serif"
+                      font-size="9" font-weight="700">RWY</text>
+
+                <!-- Climb-out segment (cyan) -->
+                <path class="tb-climb"
+                      d="M 60,230 L 175,95"
+                      fill="none" stroke="#22d3ee" stroke-width="3"
+                      stroke-linecap="round"/>
+                <!-- Engine-failure spark -->
+                <g class="tb-spark" transform="translate(175,95)">
+                  <circle r="9" fill="none" stroke="#ff6b35" stroke-width="2"/>
+                  <line x1="-13" y1="0" x2="-7" y2="0" stroke="#ff6b35" stroke-width="2"/>
+                  <line x1="13"  y1="0" x2="7"  y2="0" stroke="#ff6b35" stroke-width="2"/>
+                  <line x1="0" y1="-13" x2="0" y2="-7" stroke="#ff6b35" stroke-width="2"/>
+                  <line x1="0"  y1="13" x2="0"  y2="7" stroke="#ff6b35" stroke-width="2"/>
+                  <text x="14" y="-6" fill="#ff6b35" font-family="Segoe UI, sans-serif"
+                        font-size="10" font-weight="700">ENGINE OUT</text>
+                </g>
+                <!-- 180° turn arc (gold) -->
+                <path class="tb-turn"
+                      d="M 175,95 C 240,75 300,135 280,195"
+                      fill="none" stroke="#ffd166" stroke-width="3"
+                      stroke-linecap="round"/>
+                <!-- Glide back to runway (lime) -->
+                <path class="tb-glide"
+                      d="M 280,195 L 145,235"
+                      fill="none" stroke="#84cc16" stroke-width="3"
+                      stroke-linecap="round" marker-end="url(#tb-arrow)"/>
+
+                <!-- Altitude tick on left edge -->
+                <g stroke="#ffffff" stroke-opacity="0.35" stroke-width="1">
+                  <line x1="20" y1="95"  x2="28" y2="95"/>
+                  <line x1="20" y1="160" x2="28" y2="160"/>
+                  <line x1="20" y1="225" x2="28" y2="225"/>
+                </g>
+                <text x="32" y="98"  fill="#dbe7f0" font-family="Segoe UI, sans-serif"
+                      font-size="9" opacity="0.7">800 ft</text>
+                <text x="32" y="163" fill="#dbe7f0" font-family="Segoe UI, sans-serif"
+                      font-size="9" opacity="0.7">400 ft</text>
+                <text x="32" y="228" fill="#dbe7f0" font-family="Segoe UI, sans-serif"
+                      font-size="9" opacity="0.7">  0 ft</text>
+
+                <!-- Airplane silhouette flying the trajectory -->
+                <g class="tb-plane">
+                  <path d="M-10,0 L8,0 M0,-8 L0,8 M6,-4 L10,0 L6,4"
+                        fill="none" stroke="#ffffff" stroke-width="2.4"
+                        stroke-linecap="round" stroke-linejoin="round"
+                        transform="rotate(-90)"/>
+                </g>
+              </svg>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("How it works — the physics in 30 seconds"):
+        st.markdown(
+            """
+            <div class="tb-howbox"><div>
+            After engine failure thrust = 0, so the descent gradient is
+            <b>−D / W</b>.  In a banked turn the wing must support a
+            load factor <b>n<sub>z</sub> = 1/cos(φ)</b>, which raises
+            C<sub>L</sub>.  Induced drag grows as C<sub>L</sub><sup>2</sup>,
+            so steeper banks dramatically increase total drag and sink rate.
+            Stall speed also rises by <b>√n<sub>z</sub></b>, narrowing the
+            safe-speed margin.  The <b>heart-shaped envelope</b> below is
+            the ground track flown at each failure altitude: incomplete
+            (crash) below the <b>critical altitude</b>, complete (safe
+            return) above it.
+            </div></div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # ── Sidebar inputs ──
     st.sidebar.header("Turnback Parameters")
@@ -2166,7 +2361,7 @@ def run_turnback_page():
     # primary sim (each is ~7-12 additional critical-altitude searches), so we
     # run them once per unique combination of inputs and reuse the result.
     _sens_sig = (
-        config.name, weight, airspeed, flap_setting, field_elev, isa_dev,
+        ac_key, weight, airspeed, flap_setting, field_elev, isa_dev,
         wind_speed, wind_from_deg, wind_1000_kt, wind_2000_kt, wind_3000_kt,
         runway_length, liftoff_distance, aim_point, flap_on_return,
         speed_mode, prop_state, gear_down, gear_retract_time_s,

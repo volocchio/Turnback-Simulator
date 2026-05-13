@@ -829,7 +829,13 @@ def build_3d_satellite_map(
     return pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
-        map_style=None,  # disable default Mapbox basemap; TileLayer above wins
+        # Disable the default Carto basemap entirely.  In pydeck >= 0.8,
+        # map_style=None falls back to map_provider="carto" + Carto Road,
+        # which painted OSM-style streets *over/under* our Esri TileLayer.
+        # Setting map_provider=None turns off the built-in basemap so only
+        # the Esri World Imagery TileLayer (added above) is rendered.
+        map_provider=None,
+        map_style=None,
         tooltip={"text": "{name}"},
     )
 
