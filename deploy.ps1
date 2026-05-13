@@ -24,7 +24,7 @@ if (-not $NoPush) {
 
 # Pull latest on VPS, then rebuild the streamlit container if any python /
 # Dockerfile / compose file changed.
-wsl ssh -i $sshKey "$vpsUser@$vpsHost" @"
+$remote = @"
 cd $vpsPath
 before=`$(git rev-parse HEAD)
 git pull origin $branch
@@ -39,7 +39,9 @@ else
   echo 'No code changes; container already running.'
 fi
 echo 'Deployed to $vpsPath'
-"@
+"@ -replace "`r", ""
+
+wsl ssh -i $sshKey "$vpsUser@$vpsHost" $remote
 
 # Refresh portal index
 wsl ssh -i $sshKey "$vpsUser@$vpsHost" "if [ -x /usr/local/bin/sync-and-update-portal.sh ]; then /usr/local/bin/sync-and-update-portal.sh; fi"
