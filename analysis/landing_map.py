@@ -676,6 +676,26 @@ def build_satellite_map(
             f"<span style='font-size:11px;'>Wind from {wind_from_deg:.0f}° "
             f"@ {wind_speed_kt:.0f} kt</span></div>"
         )
+    # OSM landing-area swatches (good / caution / avoid).
+    if candidates:
+        _legend_rows.append(
+            "<div style='border-top:1px solid #ccc;margin:4px 0 2px 0;'></div>"
+            "<div style='font-size:10px;color:#555;margin:2px 0;'>"
+            "Off-airport landing options (toggle layers △ top-right)"
+            "</div>"
+        )
+        for color, label in (
+            ('#16a34a', 'Good — open ground / fields / sports'),
+            ('#f59e0b', 'Caution — roads, parking (wires/poles)'),
+            ('#dc2626', 'Avoid — water, forest, built-up'),
+        ):
+            _legend_rows.append(
+                "<div style='display:flex;align-items:center;margin:2px 0;'>"
+                f"<span style='display:inline-block;width:14px;height:14px;"
+                f"background:{color};opacity:0.55;border:1px solid {color};"
+                f"margin-right:8px;border-radius:2px;'></span>"
+                f"<span style='font-size:11px;'>{label}</span></div>"
+            )
     if _legend_rows:
         _legend_html = (
             "<details style='position: fixed; bottom: 30px; left: 10px; z-index: 9999; "
@@ -829,13 +849,16 @@ def build_3d_satellite_map(
     return pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
-        # Disable the default Carto basemap entirely.  In pydeck >= 0.8,
-        # map_style=None falls back to map_provider="carto" + Carto Road,
-        # which painted OSM-style streets *over/under* our Esri TileLayer.
-        # Setting map_provider=None turns off the built-in basemap so only
-        # the Esri World Imagery TileLayer (added above) is rendered.
+        # Force NO basemap so the Esri World Imagery TileLayer (added as the
+        # first layer above) is the satellite background.  In pydeck >=0.9 +
+        # Streamlit's `st.pydeck_chart`, passing `map_provider=None` /
+        # `map_style=None` is *not* always honored — Streamlit falls back
+        # to its own default Mapbox light style, which paints over our Esri
+        # tiles.  Passing an empty but valid Mapbox Style spec tells deck.gl
+        # "render no sources, no layers" for the basemap, leaving the Esri
+        # TileLayer as the only raster.
         map_provider=None,
-        map_style=None,
+        map_style={"version": 8, "sources": {}, "layers": []},
         tooltip={"text": "{name}"},
     )
 
