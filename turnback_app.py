@@ -8,6 +8,7 @@ zone after engine failure at various altitudes AGL.
 import streamlit as st
 import plotly.graph_objects as go
 import math
+import textwrap
 import pandas as pd
 
 from engine.aircraft_config import AIRCRAFT_CONFIG
@@ -66,7 +67,7 @@ def run_turnback_page():
 
     # ── Hero splash ──
     st.markdown(
-        """
+        textwrap.dedent("""\
         <style>
           .tb-hero {
               position: relative;
@@ -250,13 +251,13 @@ def run_turnback_page():
             </div>
           </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True,
     )
 
     with st.expander("How it works — the physics in 30 seconds"):
         st.markdown(
-            """
+            textwrap.dedent("""\
             <div class="tb-howbox"><div>
             After engine failure thrust = 0, so the descent gradient is
             <b>−D / W</b>.  In a banked turn the wing must support a
@@ -269,7 +270,7 @@ def run_turnback_page():
             (crash) below the <b>critical altitude</b>, complete (safe
             return) above it.
             </div></div>
-            """,
+            """),
             unsafe_allow_html=True,
         )
 
