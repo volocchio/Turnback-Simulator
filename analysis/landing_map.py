@@ -856,8 +856,9 @@ def build_3d_satellite_map(
         # to its own default Mapbox light style, which paints over our Esri
         # tiles.  Passing an empty but valid Mapbox Style spec tells deck.gl
         # "render no sources, no layers" for the basemap, leaving the Esri
-        # TileLayer as the only raster.
-        map_provider=None,
+        # TileLayer as the only raster.  pydeck >=0.9.1 also validates that
+        # when `map_style` is a dict, `map_provider` must be 'mapbox'.
+        map_provider="mapbox",
         map_style={"version": 8, "sources": {}, "layers": []},
         tooltip={"text": "{name}"},
     )
