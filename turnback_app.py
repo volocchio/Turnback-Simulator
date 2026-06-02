@@ -494,7 +494,8 @@ def run_turnback_page():
         from engine.airport_db import (
             load_airports, load_runway_ends, wind_components,
         )
-        airports_df = load_airports()
+        with st.spinner("Loading airport database (first load only)..."):
+            airports_df = load_airports()
         # Default search to KSEZ if present
         default_idx = 0
         if "KSEZ" in airports_df["ident"].values:
