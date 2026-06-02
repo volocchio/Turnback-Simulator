@@ -850,16 +850,18 @@ def build_3d_satellite_map(
         layers=layers,
         initial_view_state=view_state,
         # Force NO basemap so the Esri World Imagery TileLayer (added as the
-        # first layer above) is the satellite background.  In pydeck >=0.9 +
-        # Streamlit's `st.pydeck_chart`, passing `map_provider=None` /
-        # `map_style=None` is *not* always honored — Streamlit falls back
-        # to its own default Mapbox light style, which paints over our Esri
-        # tiles.  Passing an empty but valid Mapbox Style spec tells deck.gl
-        # "render no sources, no layers" for the basemap, leaving the Esri
-        # TileLayer as the only raster.  pydeck >=0.9.1 also validates that
-        # when `map_style` is a dict, `map_provider` must be 'mapbox'.
-        map_provider="mapbox",
-        map_style={"version": 8, "sources": {}, "layers": []},
+        # first layer above) is the satellite background.  History:
+        #   - pydeck >=0.9 + older Streamlit: `map_style=None` was overridden
+        #     by Streamlit injecting a default Mapbox light style.  Workaround
+        #     was to pass an empty Mapbox Style dict.
+        #   - Newer Streamlit DeckGlJsonChart frontend calls `mapStyle.indexOf`
+        #     and crashes ("e.mapStyle?.indexOf is not a function") when the
+        #     dict workaround is used.
+        #   - Current fix: pass empty string for `map_style` (frontend's
+        #     `.indexOf` succeeds, deck.gl loads no basemap), with
+        #     `map_provider=None`.  The Esri TileLayer remains the only raster.
+        map_provider=None,
+        map_style="",
         tooltip={"text": "{name}"},
     )
 
