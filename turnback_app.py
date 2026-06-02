@@ -272,6 +272,88 @@ def run_turnback_page():
             """),
         )
 
+    # ── Mode toggle: Teaching (simple) vs Advanced (all knobs) ──
+    # Default is Teaching so first-time visitors aren't dropped into a wall
+    # of sidebar widgets.  Advanced exposes the full sidebar + optimizer +
+    # sensitivity charts + theory section.
+    mode_col1, mode_col2 = st.columns([2, 5])
+    with mode_col1:
+        mode_label = st.radio(
+            "Mode",
+            ["🎓 Teaching", "🛠 Advanced"],
+            index=0 if st.session_state.get('tb_mode', 'teaching') == 'teaching' else 1,
+            horizontal=True,
+            key='tb_mode_radio',
+            label_visibility='collapsed',
+        )
+    teaching_mode = mode_label.startswith("🎓")
+    st.session_state['tb_mode'] = 'teaching' if teaching_mode else 'advanced'
+    with mode_col2:
+        if teaching_mode:
+            st.caption(
+                "**Teaching mode** — pick airplane, airport, runway, wind.  "
+                "Switch to **Advanced** to expose weight, flaps, bank, reaction time, "
+                "gear, wind profile, optimizer, sensitivity sweeps, and more."
+            )
+        else:
+            st.caption(
+                "**Advanced mode** — full sidebar of inputs, optimizer button, "
+                "bank-angle / reaction-time sensitivity sweeps, training curriculum, "
+                "and the EAA McSpadden theory & references section.  Switch back to "
+                "**Teaching** for a stripped-down view."
+            )
+
+    # In teaching mode, hide the sidebar (and its toggle chevron) entirely.
+    # All sidebar widgets still execute and produce sensible defaults; the
+    # 5 essentials (aircraft / airport / runway / wind speed / wind direction)
+    # are re-rendered in a clean "Quick Setup" card just below.
+    if teaching_mode:
+        st.markdown(
+            """
+            <style>
+              [data-testid="stSidebar"],
+              [data-testid="collapsedControl"],
+              [data-testid="stSidebarCollapseButton"] { display: none !important; }
+              section.main > div.block-container { padding-left: 2rem; padding-right: 2rem; }
+              .tb-quick-card {
+                  background: #f3f6f9;
+                  border-left: 5px solid #1f6f9c;
+                  border-radius: 8px;
+                  padding: 18px 22px 14px 22px;
+                  margin: 8px 0 18px 0;
+              }
+              .tb-quick-card h3 { margin: 0 0 4px 0; font-size: 1.15rem; color: #0b1a2b; }
+              .tb-quick-card .tb-quick-sub { color: #44607a; font-size: 0.95rem; margin-bottom: 10px; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.html(
+            """
+            <div class="tb-quick-card">
+              <h3>① Pick your airplane, airport, runway, and wind</h3>
+              <div class="tb-quick-sub">
+                The simulator computes your <b>critical altitude</b> — the lowest
+                AGL where a turnback after engine failure is survivable — and
+                shows the safe-return envelope on a 3-D map below.
+              </div>
+            </div>
+            """
+        )
+        _q_row1 = st.columns([1, 1])
+        _q_row2 = st.columns([1, 1, 1])
+        aircraft_container = _q_row1[0]
+        airport_container = _q_row1[1]
+        runway_container = _q_row2[0]
+        wind_speed_container = _q_row2[1]
+        wind_from_container = _q_row2[2]
+    else:
+        aircraft_container = st.sidebar
+        airport_container = st.sidebar
+        runway_container = st.sidebar
+        wind_speed_container = st.sidebar
+        wind_from_container = st.sidebar
+
     # ── Sidebar inputs ──
     st.sidebar.header("Turnback Parameters")
 
@@ -288,7 +370,11 @@ def run_turnback_page():
     default_idx = next((i for i, k in enumerate(all_keys) if k[0] == 'C150'), None)
     if default_idx is None:
         default_idx = next((i for i, k in enumerate(all_keys) if k[0] == 'Meridian'), 0)
-    sel_idx = st.sidebar.selectbox("Aircraft", range(len(labels)), format_func=lambda i: labels[i], index=default_idx)
+    sel_idx = aircraft_container.selectbox(
+        "Aircraft", range(len(labels)),
+        format_func=lambda i: labels[i], index=default_idx,
+        key='tb_aircraft_sel',
+    )
     ac_key = all_keys[sel_idx]
     config = AIRCRAFT_CONFIG[ac_key]
 
@@ -413,12 +499,13 @@ def run_turnback_page():
         default_idx = 0
         if "KSEZ" in airports_df["ident"].values:
             default_idx = int(airports_df.index[airports_df["ident"] == "KSEZ"][0])
-        airport_idx = st.sidebar.selectbox(
+        airport_idx = airport_container.selectbox(
             "Airport",
             options=range(len(airports_df)),
             format_func=lambda i: airports_df.iloc[i]["display_name"],
             index=default_idx,
             help="Type to search by ICAO/local code or name.",
+            key='tb_airport_sel',
         )
         airport_row = airports_df.iloc[airport_idx]
         selected_airport_ident = airport_row["ident"]
@@ -437,7 +524,7 @@ def run_turnback_page():
                 if str(runway_ends.iloc[_i]["rwy_ident"]).strip() == "21":
                     rwy_default_idx = _i
                     break
-            rwy_idx = st.sidebar.selectbox(
+            rwy_idx = runway_container.selectbox(
                 "Runway",
                 options=range(len(runway_ends)),
                 format_func=lambda i: (
@@ -448,6 +535,7 @@ def run_turnback_page():
                     else f"{runway_ends.iloc[i]['rwy_ident']} — heading unknown"
                 ),
                 index=rwy_default_idx,
+                key='tb_runway_sel',
             )
             rwy_row = runway_ends.iloc[rwy_idx]
             selected_runway_ident = str(rwy_row["rwy_ident"])
@@ -765,22 +853,24 @@ def run_turnback_page():
             )
         # Charlie #A1 — step=1 so pilots can enter 8 kt / 12 kt etc.  Step=5
         # was forcing values to multiples of 5 (the regression Charlie flagged).
-        wind_speed = st.sidebar.number_input(
+        wind_speed = wind_speed_container.number_input(
             "Surface wind speed (kt)", min_value=0, max_value=60,
             value=10, step=1,
             help="Type any integer 0–60 kt.  Use the +/- buttons for ±1 kt.  "
                  "Default 10 kt at 45° right-quartering (worst-case turn-into-wind side).",
+            key='tb_wind_speed',
         )
         if use_airport_db:
             # Default = 45° right of runway heading (right-quartering headwind)
             _default_wind_from = int(round((runway_heading_true + 45.0) % 360.0)) if runway_heading_true else 45
-            wind_from_true = st.sidebar.number_input(
+            wind_from_true = wind_from_container.number_input(
                 "Surface wind FROM (°true)", min_value=0, max_value=359,
                 value=_default_wind_from, step=1,
                 help="Wind direction in true degrees (matches METAR).  "
                      "Headwind/crosswind components are computed from runway heading.  "
                      "Default = runway heading + 45° (right-quartering headwind).  "
                      "Type any value 0–359°.",
+                key='tb_wind_from_true',
             )
         else:
             wind_dir_options = {
@@ -1239,6 +1329,19 @@ def run_turnback_page():
     col_env, col_opt = st.sidebar.columns(2)
     run_envelope = col_env.button("Build Envelope", type="primary", use_container_width=True)
     run_optimizer = col_opt.button("Optimize", type="secondary", use_container_width=True)
+
+    # Teaching mode: sidebar is CSS-hidden, so add an in-page "Compute" button
+    # and also auto-run on first load / whenever the key inputs change.
+    if teaching_mode:
+        _quick_sig = (
+            ac_key, selected_airport_ident, selected_runway_ident,
+            int(wind_speed), int(wind_from_true),
+        )
+        _last_sig = st.session_state.get('tb_quick_sig')
+        if _last_sig != _quick_sig or 'turnback_result' not in st.session_state:
+            run_envelope = True
+            st.session_state['tb_quick_sig'] = _quick_sig
+        run_optimizer = False  # optimizer is an Advanced-mode feature
 
     if run_envelope:
         # Clear optimizer so it doesn't latch
@@ -2348,6 +2451,12 @@ def run_turnback_page():
         _show_trajectory_table(envelope, critical_alt)
 
     # ── Sensitivity charts (Phase 2 — bank angle & reaction time) ──
+    # Teaching mode stops here: it keeps the focus on the single
+    # critical-altitude answer + envelope + decision ladder + data card.
+    # Advanced mode continues with sensitivity sweeps, optimizer results,
+    # curriculum, and the EAA McSpadden theory/references section.
+    if teaching_mode:
+        return
     st.markdown("---")
     st.subheader("📈 Sensitivity — How the answer moves with your assumptions")
     st.caption(
