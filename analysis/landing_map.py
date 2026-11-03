@@ -932,13 +932,13 @@ def render_landing_map_section(
              "the aircraft is when the engine quits at each altitude.",
     )
     fetch_osm = cols[3].checkbox(
-        "Find landing candidates (OSM)", value=True,
+        "Find landing candidates (OSM)", value=False,
         help="Query OpenStreetMap for nearby fields, golf courses, water, "
              "and built-up areas within glide range. Requires internet; "
              "may take a few seconds.",
     )
     show_perimeter = st.checkbox(
-        "Show airport perimeter (OSM)", value=True,
+        "Show airport perimeter (OSM)", value=False,
         help="Overlay the OpenStreetMap aerodrome boundary as a green polygon. "
              "This is the actual fenced area inside which a straight-ahead "
              "landing is survivable \u2014 *not* just the runway asphalt.",
@@ -1237,21 +1237,6 @@ def render_landing_map_section(
                     ],
                 })
 
-            # Magenta-pink climb-out path for the alternate steering mode.
-            try:
-                _ep = _cmp_climb_endpoint
-            except NameError:
-                _ep = None
-            if _ep is not None:
-                envelope_tracks_3d.append({
-                    'label': f"{cmp_label} climb-out",
-                    'color': (236, 72, 153),  # pink — distinct from primary magenta
-                    'coords': [
-                        [airport.lon, airport.lat, 0.0],
-                        _ep,
-                    ],
-                })
-
         # Straight-ahead-max track (engineless landing along centerline)
         sa_row = None
         if straight_ahead_max_alt > 0:
@@ -1287,6 +1272,7 @@ def render_landing_map_section(
         # 180° already shown in solid green above; only add 540° and circuit
         # to avoid double-drawing the same heart shape.
         for _kind, _color_hex, _color_rgb, _label in (
+            ('270', '#0ea5e9', (14, 165, 233), '270° alignment (no orbit)'),
             ('540', '#f59e0b', (245, 158, 11), '540° (orbit + opp rwy)'),
             ('circuit', '#a855f7', (168, 85, 247), 'Full circuit (same rwy)'),
         ):

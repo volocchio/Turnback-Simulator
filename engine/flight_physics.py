@@ -6,7 +6,7 @@ V-speeds, and other physics-related parameters for flight simulation.
 """
 
 import numpy as np
-from math import sqrt, exp, sin
+from math import sqrt, exp, sin, log
 
 try:
     from .thrust_deck import get_thrust_for_aircraft, ThrustDeck
@@ -126,7 +126,7 @@ def atmos(alt, isa_diff):
         isa_diff: ISA temperature deviation (deg C)
 
     Returns:
-        d_alt: Density altitude (ft) via Newton-Raphson
+        d_alt: Density altitude (ft), closed form of the ISA density column
         theta: Actual temperature ratio (OAT / 288.15 K)
         sigma: Density ratio (rho / rho_SL)
         delta: Pressure ratio (P / P_SL) from pressure altitude
@@ -152,31 +152,40 @@ def atmos(alt, isa_diff):
     # Density ratio (exact ideal-gas relation)
     sigma = delta / theta
 
-    # Density altitude via Newton-Raphson: find h where ISA sigma(h) = sigma
-    h = float(alt)
-    for _ in range(20):
-        if h <= 36089:
-            base = 1.0 - 6.8756e-6 * h
-            if base < 1e-12:
-                base = 1e-12
-            sig_isa = base ** 4.2559
-            dsig_dh = 4.2559 * base ** 3.2559 * (-6.8756e-6)
-        else:
-            sig_isa = 0.2971 * exp(-4.80637e-5 * (h - 36089.0))
-            dsig_dh = sig_isa * (-4.80637e-5)
-        if abs(dsig_dh) < 1e-20:
-            break
-        h_new = h - (sig_isa - sigma) / dsig_dh
-        if abs(h_new - h) < 0.1:
-            h = h_new
-            break
-        h = h_new
-    d_alt = h
+    # Density altitude: altitude in the ISA column whose density ratio equals
+    # sigma. Closed form of the same troposphere / stratosphere branches the
+    # previous Newton loop solved (identical constants). Turnback altitudes
+    # are in the troposphere; the stratosphere branch keeps the API exact
+    # above the tropopause.
+    d_alt = _density_altitude_ft(sigma)
 
     # Temperature and speed of sound from actual OAT
     k_temp = oat_k
     c = (1.4 * 287.0 * k_temp) ** 0.5 * 1.94384
     return d_alt, theta, sigma, delta, k_temp, c
+
+
+def _density_altitude_ft(sigma):
+    """ISA altitude (ft) whose density ratio equals ``sigma``.
+
+    Troposphere: σ = (1 − 6.8756e-6·h)^4.2559
+    Stratosphere: σ = 0.2971·exp(−4.80637e-5·(h − 36089))
+    The branch point is the troposphere formula evaluated at 36,089 ft,
+    so the two pieces meet the historical Newton solver.
+    """
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        return float("nan")
+    if sigma != sigma or sigma <= 1e-12:  # NaN or non-positive
+        return float("nan")
+    lapse = 6.8756e-6
+    trop_ft = 36089.0
+    sig_trop = (1.0 - lapse * trop_ft) ** 4.2559
+    if sigma >= sig_trop:
+        base = sigma ** (1.0 / 4.2559)
+        return (1.0 - base) / lapse
+    return trop_ft + log(0.2971 / sigma) / 4.80637e-5
 
 
 def _isa_temp_c(alt_ft):

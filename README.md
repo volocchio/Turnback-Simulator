@@ -62,11 +62,14 @@ The deploy script handles:
 
 ### Core Equations
 
-1. **Glide gradient** (zero thrust):
+1. **Glide path** (zero thrust, constant speed):
    ```
-   H_dot = -(TAS * m²·g) / (L/D)
-   H_dot = -D / (nz * W)  [altitude loss rate]
+   sin(γ) = -D / W
+   altitude rate = V_TAS · sin(γ) = -V_TAS · D / W
    ```
+   Bank does not appear in that force balance. It raises D, because
+   CL = nz·W / (q·S) with nz = 1/cos(φ). A speed change adds
+   (V₁² − V₂²) / (2g) of altitude on top of the drag term.
 
 2. **Load factor in turn**:
    ```

@@ -17,11 +17,20 @@ Physics:
     0° = headwind, 90° = right crosswind, 180° = tailwind
 """
 
+import logging
 import math
+import time
+
 from engine.flight_physics import atmos
 
+log = logging.getLogger("turnback")
+
 G_FPS2 = 32.174  # ft/s²
-DT = 0.05         # time step (seconds) — small for accuracy in tight turns
+# 0.10 s keeps the critical-altitude search inside its ±5 ft tolerance
+# versus a 0.05 s step (checked on a C172S, 45° bank, 10 kt quartering
+# wind: 638 ft vs 641 ft) and halves the pure-Python loop.
+DT = 0.10
+_KT_TO_FPS = 6076.12 / 3600.0  # 1 knot in ft/s
 
 # Prop drag increments (ΔCDo) after engine failure.
 #
@@ -216,70 +225,249 @@ def best_glide_kias(config, weight, nz, field_elevation, isa_dev, cdo_override=N
 
 
 def _kias_to_fps(kias, sigma, delta):
-    """Convert KIAS to true airspeed in ft/s at given atmospheric conditions."""
-    # Rough Mach for compressibility correction
-    a0_kt = 661.5
-    m_est = kias / (a0_kt * math.sqrt(delta / (delta / (delta / max(delta, 1e-9)))))
-    # Simplified: at low altitude / low speed, KIAS ≈ KEAS
-    correction = 1.0  # negligible below M 0.3
-    vkeas = kias / correction
-    vktas = vkeas / math.sqrt(max(sigma, 0.01))
-    v_fps = vktas * 6076.12 / 3600.0
+    """Convert KIAS to true airspeed in ft/s.
+
+    Compressibility (IAS versus EAS) is neglected. Below about Mach 0.3
+    the difference is under one percent, which covers the light-aircraft
+    turnback envelope. The middle return is therefore KEAS under that
+    approximation (KIAS is treated as KEAS). Dynamic pressure used by
+    the rest of the model is q (psf) = KEAS² / 295.
+
+    ``delta`` is retained so callers stay source-compatible; it does not
+    enter the low-Mach conversion.
+    """
+    del delta  # see docstring — kept for call-site compatibility
+    try:
+        kias_f = float(kias)
+    except (TypeError, ValueError):
+        kias_f = 0.0
+    if kias_f != kias_f or kias_f < 0.0:  # NaN or negative
+        kias_f = 0.0
+    try:
+        sigma_f = float(sigma)
+    except (TypeError, ValueError):
+        sigma_f = 1.0
+    if sigma_f != sigma_f or sigma_f < 1e-4:
+        sigma_f = 1e-4
+    vkeas = kias_f
+    vktas = vkeas / math.sqrt(sigma_f)
+    v_fps = vktas * _KT_TO_FPS
     return v_fps, vkeas, vktas
 
 
-def _estimate_climb_distance(config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_kias):
-    """Estimate horizontal distance from threshold at the moment of engine failure.
+def _finite(x):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(v)
 
-    Uses the full-thrust climb gradient at the specified airspeed to estimate
-    how far the aircraft has traveled horizontally when reaching failure_alt_agl.
+
+def _aircraft_model_key(config):
+    """Model name ('C172S') when ``config`` is the library instance."""
+    try:
+        from engine.aircraft_config import AIRCRAFT_CONFIG
+    except Exception:
+        return None
+    for key, cfg in AIRCRAFT_CONFIG.items():
+        if cfg is config:
+            return key[0]
+    return None
+
+
+def _landing_polar(config):
+    """In-flight full-flap (ΔCDo, CLmax).
+
+    The aircraft table's third drag increment is full-flap drag for this
+    single-engine library (the dataclass comment still says "ground
+    spoiler" because the schema was inherited from a jet performance
+    tool). Pair it with Clmax_flaps40. Fall back to the largest increment
+    that is actually populated.
     """
+    d3 = float(getattr(config, "dcdo_flap3", 0.0) or 0.0)
+    d2 = float(getattr(config, "dcdo_flap2", 0.0) or 0.0)
+    d1 = float(getattr(config, "dcdo_flap1", 0.0) or 0.0)
+    cl40 = float(getattr(config, "Clmax_flaps40", 0.0) or 0.0)
+    cl15 = float(getattr(config, "Clmax_flaps15", 0.0) or 0.0)
+    cl_clean = float(getattr(config, "Clmax", 0.0) or 0.0)
+    if d3 > 0.0 and cl40 > 0.0:
+        return d3, cl40
+    if d2 > 0.0:
+        return d2, (cl40 or cl15 or cl_clean)
+    if d1 > 0.0:
+        return d1, (cl15 or cl_clean)
+    return 0.0, cl_clean
+
+
+def _decimate_trajectory(traj, max_points=500):
+    """Thin a trajectory for storage and plotting.
+
+    Integration and the reported statistics use the full step history.
+    The list returned to the UI is what gets pickled into the Streamlit
+    session and shipped to Plotly / pydeck. Keeping every 0.1 s sample
+    of a multi-orbit path is tens of megabytes and is what made the
+    first page paint sit on "Computing trajectories...".
+
+    Phase-change samples and both endpoints are always retained so the
+    drawn heart and the phase coloring stay faithful.
+    """
+    n = len(traj)
+    if n <= max_points:
+        return traj
+    must = {0, n - 1}
+    prev_phase = traj[0].get("phase")
+    for i in range(1, n):
+        ph = traj[i].get("phase")
+        if ph != prev_phase:
+            must.add(i - 1)
+            must.add(i)
+            prev_phase = ph
+    budget = max_points - len(must)
+    if budget < 2:
+        idx = sorted(must)[:max_points]
+    else:
+        step = max(1, int(n / budget))
+        idx = sorted(must | set(range(0, n, step)))
+        if len(idx) > max_points:
+            stride = len(idx) / float(max_points)
+            picked = [idx[min(n - 1, int(i * stride))] for i in range(max_points)]
+            picked[0] = 0
+            picked[-1] = n - 1
+            idx = sorted(set(picked) | {0, n - 1})
+    return [traj[i] for i in idx]
+
+
+def _return_heading(x, y, target_y):
+    """Heading (rad, 0 = +Y) that captures the centerline, then tracks it.
+
+    Pointing straight at the touchdown target only crosses x = 0 at that
+    target. A glide that reaches the pavement short of the target is then
+    still offset by a large fraction of the turn diameter — beside the
+    runway, inside the 75 ft lateral gate. Lead the aim by about three
+    cross-track distances so the track is on the centerline before
+    touchdown, which is what a pilot does on the intercept.
+    """
+    cross = abs(x)
+    remaining = target_y - y
+    if cross < 40.0 or abs(remaining) < 1.0:
+        dy = remaining if abs(remaining) >= 1.0 else (1.0 if remaining >= 0.0 else -1.0)
+        return math.atan2(-x, dy)
+    lead = max(300.0, min(3.0 * cross, abs(remaining)))
+    if remaining >= 0.0:
+        aim_y = min(y + lead, target_y)
+    else:
+        aim_y = max(y - lead, target_y)
+    dy = aim_y - y
+    if abs(dy) < 1.0:
+        dy = 1.0 if remaining >= 0.0 else -1.0
+    return math.atan2(-x, dy)
+
+
+def _aborted_result(reason):
+    """Structured failure for non-physical inputs. Never raises."""
+    log.warning("turnback aborted: %s", reason)
+    return {
+        "trajectory": [],
+        "success": False,
+        "altitude_at_runway": None,
+        "altitude_at_departure_threshold": None,
+        "altitude_at_takeoff_threshold": None,
+        "stalled": False,
+        "stall_time": None,
+        "turn_radius_ft": float("inf"),
+        "ground_impact": None,
+        "dist_from_threshold": 0.0,
+        "landing_rollout": 0.0,
+        "runway_overrun": False,
+        "remaining_runway": None,
+        "computed_aim_y": 0.0,
+        "speed_info": {"mode": "aborted", "reason": reason},
+        "landing_direction": "reverse",
+        "total_turn_deg": 0.0,
+        "altitude_loss_per_180": None,
+        "altitude_at_180_increments": [],
+        "phase_summary": [],
+    }
+
+
+def _estimate_climb_distance(config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_kias,
+                             wind_x_fps=0.0, wind_y_fps=0.0, climb_steering="track"):
+    """Horizontal distance from liftoff to engine failure, and the time to get there.
+
+    Positioning uses published POH rate of climb (scaled for weight and
+    density) when the aircraft is in the POH table. The previous model
+    scaled a light-jet thrust polynomial by ``thrust_mult``. That polynomial
+    over-states piston climb thrust, which put the failure too close to the
+    runway and made the turnback look easier than the POH climb gradient.
+
+    Aircraft without a POH row still use the polynomial, with the same 2%
+    gradient floor as before.
+
+    Wind, track-hold only: the pilot crabs so the ground track stays on
+    centerline. Distance along the runway is groundspeed × time. A headwind
+    (``wind_y_fps`` < 0; +Y is the takeoff direction) shortens it. Heading-hold
+    returns the still-air horizontal air distance; the caller adds the
+    wind-drift offset on top, which is the contract the heading-hold tests use.
+    """
+    failure_alt_agl = max(float(failure_alt_agl), 0.0)
     mid_alt = field_elevation + failure_alt_agl / 2.0
     _, _, sigma, delta, _, c_kt = atmos(mid_alt, isa_dev)
     v_fps, vkeas, _ = _kias_to_fps(airspeed_kias, sigma, delta)
-    q = vkeas ** 2 / 295.0
+    v_fps = max(v_fps, 1.0)
 
-    S = config.wing_area
-    b = config.span
-    e = config.oswald
-    h_wl = config.winglet_height
-    cdo = config.cdo
-    k = _compute_aero_k(S, b, e, h_wl)
+    roc_fps = None
+    model_key = _aircraft_model_key(config)
+    if model_key:
+        try:
+            from engine.poh_data import roc_poh_fpm
+            roc_fpm = roc_poh_fpm(model_key, config, weight, mid_alt, isa_dev)
+        except Exception:
+            roc_fpm = None
+            log.exception("POH climb lookup failed for %s", model_key)
+        if roc_fpm and roc_fpm > 50.0:
+            roc_fps = roc_fpm / 60.0
 
-    # CL for wings-level flight
-    cl = weight / (q * S) if q * S > 0 else 1.0
-    cd = cdo + k * cl ** 2
-    drag = cd * q * S
+    if roc_fps is None:
+        q = vkeas ** 2 / 295.0
+        S = config.wing_area
+        k = _compute_aero_k(S, config.span, config.oswald, config.winglet_height)
+        cl = weight / (q * S) if q * S > 0 else 1.0
+        cd = config.cdo + k * cl ** 2
+        drag = cd * q * S
+        d_alt_mid = atmos(mid_alt, isa_dev)[0]
+        m_est = airspeed_kias / max(c_kt, 100.0)
+        eff_alt = d_alt_mid
+        thrust_reg = (2785.75
+                      - 1950.17 * m_est
+                      - 0.05261 * eff_alt
+                      - 12.9726 * m_est ** 2
+                      + 0.07669 * m_est * eff_alt
+                      - 0.0000001806 * eff_alt ** 2
+                      + 1118.99 * m_est ** 3
+                      - 0.03617 * m_est ** 2 * eff_alt
+                      - 0.0000003701 * m_est * eff_alt ** 2
+                      + 0.000000000003957 * eff_alt ** 3)
+        thrust = thrust_reg * config.thrust_mult * config.engines
+        if thrust < 100:
+            thrust = 500
+        sin_g = (thrust - drag) / max(weight, 1.0)
+        sin_g = min(max(sin_g, 0.02), 0.99)
+        roc_fps = v_fps * sin_g
 
-    # Rough thrust estimate — use the polynomial model at mid-altitude
-    d_alt_mid, _, _, _, _, _ = atmos(mid_alt, isa_dev)
-    m_est = airspeed_kias / max(c_kt, 100.0)
-    thrust_mult = config.thrust_mult
-    engines = config.engines
+    roc_fps = max(float(roc_fps), 0.5)
+    sin_g = min(0.99, roc_fps / v_fps)
+    cos_g = math.sqrt(max(0.0, 1.0 - sin_g * sin_g))
+    v_horiz = v_fps * cos_g
+    time_s = failure_alt_agl / roc_fps
 
-    # Polynomial thrust (from flight_physics, simplified here)
-    eff_alt = d_alt_mid
-    thrust_reg = (2785.75
-                  - 1950.17 * m_est
-                  - 0.05261 * eff_alt
-                  - 12.9726 * m_est ** 2
-                  + 0.07669 * m_est * eff_alt
-                  - 0.0000001806 * eff_alt ** 2
-                  + 1118.99 * m_est ** 3
-                  - 0.03617 * m_est ** 2 * eff_alt
-                  - 0.0000003701 * m_est * eff_alt ** 2
-                  + 0.000000000003957 * eff_alt ** 3)
-    thrust = thrust_reg * thrust_mult * engines
-    if thrust < 100:
-        thrust = 500  # minimum fallback for single-engine piston/turboprop
-
-    gradient = (thrust - drag) / max(weight, 1.0)
-    gradient = max(gradient, 0.02)  # at least 2% to avoid infinite distance
-
-    distance_ft = failure_alt_agl / gradient
-    # Time aloft to climb to failure altitude (used by E2 heading-hold drift).
-    # t_climb = distance / horizontal TAS, computed with the same v_fps.
-    time_s = distance_ft / max(v_fps, 1.0)
+    if climb_steering == "track":
+        # Crab cancels the crosswind. Along-track airspeed is what remains.
+        cross = abs(float(wind_x_fps))
+        along_air = math.sqrt(max(v_horiz * v_horiz - min(cross, v_horiz) ** 2, 1.0))
+        gs = along_air + float(wind_y_fps)
+        distance_ft = max(0.0, gs * time_s)
+    else:
+        distance_ft = v_horiz * time_s
     return distance_ft, time_s
 
 
@@ -513,25 +701,40 @@ def _altitude_at_y(trajectory, target_y):
 #  The pilot needs to know the MINIMUM altitude that buys each option.
 # ---------------------------------------------------------------------------
 
-MANEUVER_KINDS = ('180', '540', 'circuit')
+MANEUVER_KINDS = ('180', '270', '540', 'circuit')
 
-# Threshold (deg) above which a 'reverse' landing is classified as
-# having included a 360° orbit (i.e., a 540° maneuver).  Pure 180° turns
-# rarely exceed ~210° of net heading change in practice.
-_ORBIT_TURN_THRESHOLD_DEG = 270.0
+# A continuous turn onto the reciprocal final routinely passes 180° and
+# finishes between ~210° and ~300° with NO extra circle. That is the
+# classic "270" alignment (Rogers / AFH), not a 540. Calling everything
+# at or above 270° a "540" mislabeled that geometry as an orbit.
+# A real 540 is an explicit orbit phase, or a heading change large
+# enough that a full extra circle was flown on top of the reversal
+# (180 + most of 360 ≈ 400°).
+_TEARDROP_TURN_MIN_DEG = 210.0
+_ORBIT_TURN_THRESHOLD_DEG = 400.0
 
 
 def classify_maneuver(sub: dict) -> str | None:
     """Classify a single sim sub-result into one of MANEUVER_KINDS.
 
     Returns None if the sim did not succeed.
+
+    '180'     — reversal, heading change under 210°, land opposite.
+    '270'     — continued turn to align on final, no orbit, land opposite.
+    '540'     — an orbit was flown (or heading change ≥ 400°) then opposite.
+    'circuit' — landing in the original takeoff direction.
     """
     if not sub or not sub.get('success'):
         return None
     if sub.get('landing_direction') == 'original':
         return 'circuit'
+    phases = {b.get('phase') for b in (sub.get('phase_summary') or [])}
     total = float(sub.get('total_turn_deg') or 0.0)
-    return '540' if total >= _ORBIT_TURN_THRESHOLD_DEG else '180'
+    if 'orbit' in phases or total >= _ORBIT_TURN_THRESHOLD_DEG:
+        return '540'
+    if total >= _TEARDROP_TURN_MIN_DEG:
+        return '270'
+    return '180'
 
 
 def find_min_alt_per_maneuver(envelope) -> dict:
@@ -638,6 +841,22 @@ def simulate_turnback(
             turn_radius_ft: radius of the turn (ft)
             ground_impact: {x, y} of ground contact if unsuccessful
     """
+    if (not _finite(weight) or weight <= 0
+            or not _finite(getattr(config, "wing_area", None)) or config.wing_area <= 0):
+        return _aborted_result("weight and wing area must be finite and positive")
+    if (not _finite(failure_alt_agl) or not _finite(airspeed_kias)
+            or not _finite(reaction_time) or not _finite(field_elevation)):
+        return _aborted_result("altitude, airspeed, reaction time, and elevation must be finite")
+    if airspeed_kias <= 0:
+        return _aborted_result("airspeed must be positive")
+    if not _finite(bank_angle_deg):
+        bank_angle_deg = 0.0
+    # Past 89° the level-turn load factor 1/cos(φ) is no longer a coordinated
+    # turn a pilot can fly. Clamp rather than emit NaN from tan/cos.
+    bank_angle_deg = min(max(float(bank_angle_deg), 0.0), 89.0)
+    failure_alt_agl = max(float(failure_alt_agl), 0.0)
+    reaction_time = max(float(reaction_time), 0.0)
+
     # Aircraft parameters
     S = config.wing_area
     b = config.span
@@ -653,8 +872,7 @@ def simulate_turnback(
         dcdo_flap = config.dcdo_flap1
         clmax_flap = config.Clmax_flaps15
     elif flap_setting == 2:
-        dcdo_flap = config.dcdo_flap2
-        clmax_flap = config.Clmax_flaps40
+        dcdo_flap, clmax_flap = _landing_polar(config)
     else:
         dcdo_flap = 0.0
         clmax_flap = config.Clmax
@@ -670,18 +888,11 @@ def simulate_turnback(
     # Runway geometry
     use_runway = runway_length > 0 and liftoff_distance > 0
 
-    # Pre-compute best-available landing flap config for runway model.
-    # On the return phase the pilot always deploys the best flaps available
-    # to steepen descent and reduce touchdown speed / rollout.
-    if getattr(config, 'dcdo_flap2', 0.0) > 0:
-        dcdo_landing = config.dcdo_flap2
-        clmax_landing = config.Clmax_flaps40
-    elif getattr(config, 'dcdo_flap1', 0.0) > 0:
-        dcdo_landing = config.dcdo_flap1
-        clmax_landing = config.Clmax_flaps15
-    else:
-        dcdo_landing = 0.0
-        clmax_landing = config.Clmax
+    # Full-flap polar for the return. Previously this paired Clmax_flaps40
+    # with the *middle* drag increment (dcdo_flap2), so "landing / full"
+    # had full-flap lift and only approach-flap drag. The glide on final
+    # was too flat.
+    dcdo_landing, clmax_landing = _landing_polar(config)
 
     # Approach speed for runway-model return phase: 1.3 × Vs_landing
     approach_kias = None
@@ -698,6 +909,12 @@ def simulate_turnback(
     # The wind velocity vector points opposite to where it comes FROM.
     # NOTE: Wind speed will be interpolated per timestep based on altitude.
     wind_from_rad = math.radians(wind_from_deg)
+    # Surface wind velocity. +X is right of centerline, +Y is the takeoff
+    # direction. wind_from 0° is a headwind, so the velocity vector points
+    # in −Y. 90° (from the right) blows toward −X.
+    _wind_fps_sfc = wind_speed_kt * _KT_TO_FPS
+    _wind_x_sfc = -_wind_fps_sfc * math.sin(wind_from_rad)
+    _wind_y_sfc = -_wind_fps_sfc * math.cos(wind_from_rad)
 
     # Bank parameters
     phi_rad = math.radians(bank_angle_deg)
@@ -740,20 +957,18 @@ def simulate_turnback(
         target_y = 0.0
 
     climb_dist, climb_time_s = _estimate_climb_distance(
-        config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb
+        config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb,
+        wind_x_fps=_wind_x_sfc, wind_y_fps=_wind_y_sfc, climb_steering=climb_steering,
     )
     dist_from_threshold = liftoff_distance + climb_dist
 
     # E2: climb steering toggle.  In 'track' mode (default) the pilot crabs
-    # into wind so the ground track stays on centerline (x_init = 0).  In
-    # 'heading' mode the nose is held on runway heading and the airplane
+    # into wind so the ground track stays on centerline (x_init = 0) and the
+    # along-track distance above already includes headwind/tailwind.
+    # In 'heading' mode the nose is held on runway heading and the airplane
     # drifts downwind during the climb — by failure altitude the aircraft
-    # is offset from centerline by wind_x × climb_time.  Surface wind dir
-    # is used (climb is mostly low-altitude) for a clean apples-to-apples
-    # comparison with the published wind.
-    _wind_fps_sfc = wind_speed_kt * 6076.12 / 3600.0
-    _wind_x_sfc = -_wind_fps_sfc * math.sin(math.radians(wind_from_deg))
-    _wind_y_sfc = -_wind_fps_sfc * math.cos(math.radians(wind_from_deg))
+    # is offset from centerline by wind × climb_time.  Surface wind is used
+    # (the climb is mostly low-altitude).
     if climb_steering == 'heading':
         climb_drift_x = _wind_x_sfc * climb_time_s
         climb_drift_y = _wind_y_sfc * climb_time_s
@@ -999,18 +1214,12 @@ def simulate_turnback(
                         max_orbits -= 1
 
             if phase == 'return':
-                if landing_direction == 'original':
-                    # Landing same direction — fly toward far-end aim point
-                    dx_to_tgt = 0.0 - x
-                    dy_to_tgt = target_y - y
-                    dist_to_tgt = math.sqrt(dx_to_tgt ** 2 + dy_to_tgt ** 2)
-                    if dist_to_tgt > 1.0:
-                        heading = math.atan2(dx_to_tgt, dy_to_tgt)
-                elif use_runway and y < target_y:
+                if use_runway and landing_direction != 'original' and y < target_y:
+                    # Past the reverse aim point — keep a nose toward the
+                    # centerline while the rollout check decides success.
                     heading = math.atan2(-x, -500.0)
-                else:
-                    if dist_to_tgt > 1.0:
-                        heading = math.atan2(dx_to_tgt, dy_to_tgt)
+                elif abs(target_y - y) > 1.0 or abs(x) > 1.0:
+                    heading = _return_heading(x, y, target_y)
 
         elif phase == 'circuit':
             # Continue turning ~180° to align with original runway heading.
@@ -1105,10 +1314,16 @@ def simulate_turnback(
             else:
                 target_kias = airspeed_kias
 
-        # === Energy-based speed ramping ===
+        # === Speed ramping ===
         # Ramp actual_kias toward target_kias at ACCEL_LIMIT_KT_S.
-        # The altitude cost/benefit of changing speed is captured in the
-        # energy-balance sink rate below.
+        # Holding a new speed trades kinetic and potential energy:
+        #   Δh = (V_before² − V_after²) / (2g)
+        # evaluated at the current density, so a density-driven TAS change
+        # at constant KIAS is not mistaken for a pitch change. Decelerating
+        # to glide speed gives altitude back; accelerating into the bank
+        # (Vbg × √nz) spends it. The steady sink rate below is the
+        # constant-speed term V·sinγ = −V·D/W and does not include this.
+        kias_before_ramp = actual_kias
         speed_error_kt = target_kias - actual_kias
         max_speed_change = ACCEL_LIMIT_KT_S * DT
         if abs(speed_error_kt) <= max_speed_change:
@@ -1121,6 +1336,10 @@ def simulate_turnback(
         # --- Airspeed conversion (use ACTUAL speed) ---
         current_kias = actual_kias
         v_fps_actual, vkeas, vktas = _kias_to_fps(current_kias, sigma_now, delta_now)
+        energy_dh = 0.0
+        if abs(actual_kias - kias_before_ramp) > 1e-6:
+            v_before, _, _ = _kias_to_fps(kias_before_ramp, sigma_now, delta_now)
+            energy_dh = (v_before * v_before - v_fps_actual * v_fps_actual) / (2.0 * G_FPS2)
         q = vkeas ** 2 / 295.0  # dynamic pressure (psf, from EAS in knots)
 
         # --- Aerodynamics (based on actual speed and actual nz) ---
@@ -1228,8 +1447,17 @@ def simulate_turnback(
 
         x += (v_horiz * math.sin(heading) + wind_x) * DT
         y += (v_horiz * math.cos(heading) + wind_y) * DT
-        z += v_vert * DT
+        z += v_vert * DT + energy_dh
         t += DT
+        if stalled:
+            # Parabolic polar is not valid past CLmax. Stop rather than
+            # keep integrating a wing that has departed.
+            success = False
+            break
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
+            log.warning("non-finite state at t=%.2fs; stopping integration", t)
+            success = False
+            break
 
         # --- Check runway crossing ---
         # Aircraft has returned when y crosses target_y going negative-ward
@@ -1280,8 +1508,13 @@ def simulate_turnback(
             y = trajectory[-1]['y'] + (y - trajectory[-1]['y']) * frac
             z = 0.0
 
+    # A stall is not a successful return, even if the extrapolated polar
+    # would have put the airplane on the pavement.
+    if stalled:
+        success = False
+
     # Runway model: determine success from actual ground-contact position
-    if use_runway and not success and total_heading_change > math.pi * 0.75 and z <= 0:
+    if use_runway and not success and not stalled and total_heading_change > math.pi * 0.75 and z <= 0:
         # Aircraft reached ground — check if it landed on the runway
         if 0 <= y <= runway_length and abs(x) < 75.0:
             success = True
@@ -1370,6 +1603,10 @@ def simulate_turnback(
     )
     altitude_at_takeoff_threshold = _altitude_at_y(trajectory, _near_end_y)
 
+    # Statistics above used the full step history. The list handed to the
+    # UI is thinned so Streamlit and the map traces stay small.
+    trajectory = _decimate_trajectory(trajectory)
+
     return {
         'trajectory': trajectory,
         'success': success,
@@ -1404,6 +1641,7 @@ def simulate_straight_ahead(
     wind_speed_kt=0.0, wind_from_deg=0.0,
     wind_1000_kt=0.0, wind_2000_kt=0.0, wind_3000_kt=0.0,
     wind_dir_profile=None,
+    wind_profile=None,
     runway_length=0.0, liftoff_distance=0.0,
     speed_mode='fixed',
     prop_state='feathered',
@@ -1437,16 +1675,8 @@ def simulate_straight_ahead(
         cdo_clean += config.dcdo_gear
     k = _compute_aero_k(S, b, e, h_wl)
 
-    # Best available landing-flap config
-    if getattr(config, 'dcdo_flap2', 0.0) > 0:
-        dcdo_landing = config.dcdo_flap2
-        clmax_landing = config.Clmax_flaps40
-    elif getattr(config, 'dcdo_flap1', 0.0) > 0:
-        dcdo_landing = config.dcdo_flap1
-        clmax_landing = config.Clmax_flaps15
-    else:
-        dcdo_landing = 0.0
-        clmax_landing = config.Clmax
+    # Same full-flap polar as the turnback return (see _landing_polar).
+    dcdo_landing, clmax_landing = _landing_polar(config)
 
     # Start clean during reaction
     cdo = cdo_clean
@@ -1480,7 +1710,8 @@ def simulate_straight_ahead(
         airspeed_for_climb = airspeed_kias
 
     climb_dist, climb_time_s = _estimate_climb_distance(
-        config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb
+        config, weight, field_elevation, isa_dev, failure_alt_agl, airspeed_for_climb,
+        wind_x_fps=wind_x, wind_y_fps=wind_y, climb_steering=climb_steering,
     )
     dist_from_threshold = liftoff_distance + climb_dist
 
@@ -1525,14 +1756,25 @@ def simulate_straight_ahead(
         alt_msl = field_elevation + max(z, 0.0)
         _, _, sigma_now, delta_now, _, _ = atmos(alt_msl, isa_dev)
 
-        # E3: per-altitude wind direction (relative to runway).
+        # Wind speed varies with altitude the same way the turnback does.
+        # Previously only the direction profile was applied, and the speed
+        # stayed at the surface value for the whole glide.
+        if wind_profile:
+            wind_speed_at_alt = _interpolate_wind_profile(z, wind_speed_kt, wind_profile)
+        else:
+            wind_speed_at_alt = _interpolate_wind_at_altitude(
+                z, wind_speed_kt, wind_1000_kt, wind_2000_kt, wind_3000_kt
+            )
+        wind_fps = wind_speed_at_alt * _KT_TO_FPS
         if wind_dir_profile:
             _dir_deg_at_alt = _interpolate_wind_dir_profile(
                 z, wind_from_deg, wind_dir_profile
             )
             _wind_from_rad_now = math.radians(_dir_deg_at_alt)
-            wind_x = -wind_fps * math.sin(_wind_from_rad_now)
-            wind_y = -wind_fps * math.cos(_wind_from_rad_now)
+        else:
+            _wind_from_rad_now = wind_from_rad
+        wind_x = -wind_fps * math.sin(_wind_from_rad_now)
+        wind_y = -wind_fps * math.cos(_wind_from_rad_now)
         # E2: gear retraction event during the post-failure trajectory.
         if (gear_retract_time_s is not None and gear_down
                 and t >= gear_retract_time_s and config.dcdo_gear > 0
@@ -1617,7 +1859,7 @@ def simulate_straight_ahead(
     # Can it land and stop on remaining runway?
     remaining_runway_ahead = runway_length - touchdown_y
     runway_overrun = landing_rollout > remaining_runway_ahead or remaining_runway_ahead < 0
-    success = not runway_overrun and remaining_runway_ahead >= 0
+    success = (not stalled) and (not runway_overrun) and remaining_runway_ahead >= 0
 
     # Altitude when passing runway end (if it overflies)
     altitude_at_runway_end = None
@@ -1631,6 +1873,8 @@ def simulate_straight_ahead(
             else:
                 altitude_at_runway_end = p['z']
             break
+
+    trajectory = _decimate_trajectory(trajectory)
 
     return {
         'success': success,
@@ -1682,6 +1926,7 @@ def find_straight_ahead_max_altitude(
         wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
         wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
         wind_dir_profile=wind_dir_profile,
+        wind_profile=wind_profile,
         runway_length=runway_length, liftoff_distance=liftoff_distance,
         speed_mode=speed_mode,
         prop_state=prop_state,
@@ -1851,6 +2096,13 @@ def build_turnback_envelope(
         straight_ahead_max_alt: max altitude for straight-ahead landing (0 if N/A)
     """
     use_runway = runway_length > 0 and liftoff_distance > 0
+    t0 = time.perf_counter()
+    log.info(
+        "envelope start weight=%.0f lb bank=%.0f° reaction=%.1fs "
+        "wind=%.0fkt@%.0f° alt_step=%s speed_mode=%s",
+        weight, bank_angle_deg, reaction_time, wind_speed_kt, wind_from_deg,
+        alt_step, speed_mode,
+    )
 
     common = dict(
         runway_length=runway_length, liftoff_distance=liftoff_distance,
@@ -1937,6 +2189,8 @@ def build_turnback_envelope(
         reaction_time=reaction_time,
         field_elevation=field_elevation, isa_dev=isa_dev,
         wind_speed_kt=wind_speed_kt, wind_from_deg=wind_from_deg,
+        wind_1000_kt=wind_1000_kt, wind_2000_kt=wind_2000_kt, wind_3000_kt=wind_3000_kt,
+        wind_profile=wind_profile,
         wind_dir_profile=wind_dir_profile,
         runway_length=runway_length, liftoff_distance=liftoff_distance,
         speed_mode=speed_mode,
@@ -1980,6 +2234,11 @@ def build_turnback_envelope(
 
         envelope.append(item)
 
+    log.info(
+        "envelope done in %.2fs critical L/R=%.0f/%.0f ft rows=%d straight_ahead_max=%.0f",
+        time.perf_counter() - t0, critical_alt_left, critical_alt_right,
+        len(envelope), straight_ahead_max_alt,
+    )
     return critical_alt, envelope, critical_alt_left, critical_alt_right, straight_ahead_max_alt
 
 

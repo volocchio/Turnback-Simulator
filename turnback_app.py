@@ -5,11 +5,25 @@ Streamlit page with 3D Plotly heart-shaped envelope showing the safe-return
 zone after engine failure at various altitudes AGL.
 """
 
-import streamlit as st
-import plotly.graph_objects as go
+import logging
 import math
+import sys
 import textwrap
+
 import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+# Container logs were coming back empty because nothing was written to
+# stdout until a widget failed. Configure the process logger before any
+# work, and log the phases that used to sit silently under a spinner.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logging.getLogger("turnback").info("Turnback Simulator process started")
 
 from engine.aircraft_config import AIRCRAFT_CONFIG
 from engine.poh_data import (
@@ -258,16 +272,35 @@ def run_turnback_page():
         st.html(
             textwrap.dedent("""\
             <div class="tb-howbox"><div>
-            After engine failure thrust = 0, so the descent gradient is
-            <b>−D / W</b>.  In a banked turn the wing must support a
-            load factor <b>n<sub>z</sub> = 1/cos(φ)</b>, which raises
-            C<sub>L</sub>.  Induced drag grows as C<sub>L</sub><sup>2</sup>,
-            so steeper banks dramatically increase total drag and sink rate.
-            Stall speed also rises by <b>√n<sub>z</sub></b>, narrowing the
-            safe-speed margin.  The <b>heart-shaped envelope</b> below is
-            the ground track flown at each failure altitude: incomplete
-            (crash) below the <b>critical altitude</b>, complete (safe
-            return) above it.
+            After engine failure thrust = 0, so the unaccelerated flight-path
+            angle is <b>sin γ = −D / W</b>.  In a banked turn the wing must
+            support a load factor <b>n<sub>z</sub> = 1/cos φ</b> (level-turn
+            approximation; the cos γ factor is omitted and is within about
+            1% for a normal glide).  Induced drag grows as C<sub>L</sub><sup>2</sup>,
+            so steeper banks increase drag and sink rate.  Stall speed rises
+            by <b>√n<sub>z</sub></b>: +8% at 30°, +19% at 45°, +41% at 60°.
+            The heart-shaped envelope is the ground track at each failure
+            altitude.  Below the critical altitude the return is not completed
+            on the runway.
+            </div></div>
+            <div class="tb-howbox" style="margin-top:8px"><div>
+            <b>Assumptions, stated so they can be checked.</b>
+            Zero thrust after the failure.  Coordinated flight, no sideslip
+            except the modeled forward slip on final.  KIAS is treated as
+            KEAS (compressibility under about 1% below Mach 0.3).
+            Wind changes the ground track only; it does not change the
+            air-mass aerodynamics.  Wind direction is relative to the runway:
+            0° headwind, 90° from the right, 180° tailwind.  +X is right of
+            centerline, +Y is the takeoff direction.  During the reaction
+            delay the airplane holds the failure speed, wings level; the
+            pitch to the glide target starts when that timer ends, and the
+            speed change trades kinetic energy for altitude.  Climb position
+            uses the published POH rate of climb when one is on file.
+            Propeller drag is a constant ΔC<sub>D0</sub> by prop state, not
+            a speed-dependent windmill model.  The safety-margin factor is a
+            multiplier on the calculated altitude, not a statistical
+            tolerance.  This is a planning tool, not a flight-test reduction
+            and not an authorization to turn back.
             </div></div>
             """),
         )
@@ -746,9 +779,11 @@ def run_turnback_page():
         "Reaction time (s)", min_value=0.0, max_value=10.0,
         value=5.0, step=0.5,
         help=(
-            "Time from engine failure until the pilot lowers the nose and "
-            "establishes glide attitude.  During this delay the airplane decelerates "
-            "and loses altitude with no recovery action.  FAA accident studies and "
+            "Time from engine failure until the pilot pitches for the glide "
+            "target and starts the turn.  During the delay the model holds "
+            "the failure speed, wings level — it does not simulate a frozen "
+            "stick.  The speed change, and its altitude trade, begins when "
+            "the timer ends.  FAA accident studies and "
             "NTSB simulator work suggest 3–4 s for a startled, well-trained pilot "
             "and 5–7 s for a surprised one.  Charlie Precourt teaches that practiced "
             "pilots can hit 1–2 s but the unannounced average is much higher; this "
@@ -1292,7 +1327,7 @@ def run_turnback_page():
     # — combined with the smart aim point — lowers the critical altitude.
     compare_climb_steering = st.sidebar.checkbox(
         "Compare alternate climb steering",
-        value=True,
+        value=False,
         help=(
             "Builds a SECOND envelope using the opposite climb-steering "
             "choice and overlays it on the satellite map (dashed gold).  "
@@ -1595,7 +1630,7 @@ def run_turnback_page():
             f"border-radius:4px;'>"
             f"<div style='font-size:11px;font-weight:bold;color:#8a6d00;"
             f"letter-spacing:0.5px;margin-bottom:4px;'>"
-            f"📢 SELF-BRIEF — read aloud at the hold-short line</div>"
+            f"SELF-BRIEF — read aloud at the hold-short line</div>"
             f"<div style='font-size:15px;color:#1a1a1a;line-height:1.5;'>"
             f"{_brief_text}</div></div>",
             unsafe_allow_html=True,
@@ -1625,6 +1660,22 @@ def run_turnback_page():
         col5.metric("Turn Radius", f"{turn_radius:,.0f} ft")
     else:
         col5.metric("Turn Radius", "—")
+
+    _left_demonstrated = any(
+        row.get("is_critical_left") and (row.get("left") or {}).get("success")
+        for row in envelope
+    )
+    _right_demonstrated = any(
+        row.get("is_critical_right") and (row.get("right") or {}).get("success")
+        for row in envelope
+    )
+    if envelope and not (_left_demonstrated and _right_demonstrated):
+        st.error(
+            "No successful return was found on at least one side inside the "
+            "altitude ceiling. A number equal to that ceiling is the search "
+            "limit, not a demonstrated turnback. Raise the ceiling or change "
+            "bank, speed, or runway before treating it as a minimum."
+        )
 
     # ── LEFT vs RIGHT delta callout (May 2026) ──
     # Plain-English read of which side wins, by how much, and how that
@@ -1719,18 +1770,21 @@ def run_turnback_page():
         _recip_dl = f"{_recip_n_dl:02d}"
     except Exception:
         _recip_dl = 'opposite'
-    st.markdown("#### 🪜 Decision Ladder — minimum altitude per maneuver")
-    _ladder_cols = st.columns(3)
+    st.markdown("#### Decision ladder — minimum altitude per maneuver")
+    _ladder_cols = st.columns(4)
     _ladder = [
-        ('180', '180° turnback',
-         f"Land **rwy {_recip_dl}** (opposite direction).",
+        ('180', '180° reversal',
+         f"Heading change under 210°. Land **rwy {_recip_dl}**.",
          '#16a34a'),
+        ('270', '270° alignment',
+         f"Continue the turn to final (about 210–300°), no orbit. "
+         f"Land **rwy {_recip_dl}**.",
+         '#0ea5e9'),
         ('540', '540° (orbit + turnback)',
-         f"Add a 360° orbit, then land **rwy {_recip_dl}**.",
+         f"A 360° orbit was flown, then land **rwy {_recip_dl}**.",
          '#f59e0b'),
         ('circuit', 'Full circuit',
-         f"Continue ~360° around, land **rwy {_rwy_id_dl}** "
-         "(same direction as takeoff).",
+         f"Land **rwy {_rwy_id_dl}** (same direction as takeoff).",
          '#a855f7'),
     ]
     for col, (kind, title, caption, color) in zip(_ladder_cols, _ladder):
@@ -1762,11 +1816,12 @@ def run_turnback_page():
                     unsafe_allow_html=True,
                 )
     st.caption(
-        "Each card shows the **lowest** altitude at which the simulator "
-        "completed that maneuver class on at least one side.  Above the "
-        "180° number you have a turnback; above the 540° number you can "
-        "afford an orbit; above the circuit number you can fly a full "
-        "pattern back to the original runway."
+        "Each card is the **lowest** altitude at which that maneuver class "
+        "was completed on at least one side.  A turn that simply keeps going "
+        "until it lines up on final — often 210° to 300° of heading change, "
+        "with no extra circle — is the 270° alignment, not a 540°.  "
+        "The 540° card requires an orbit.  The circuit card is a landing "
+        "in the original takeoff direction."
     )
 
     # ── E2-P3: landing-direction crossover panel ──
@@ -2660,7 +2715,7 @@ def run_turnback_page():
                 f"roughly **{cost_per_sec:+.0f} ft** of critical altitude in this scenario.  "
                 f"At a 0-second 'pre-briefed' response, the airplane needs **{rs['crits'][0]} ft**.  "
                 f"At a realistic 5-second startle response, it needs **{rs['crits'][rs['rts'].index(5)] if 5 in rs['rts'] else '?'} ft**.  "
-                f"At a 10-second 'oh-shit' delay, it needs **{rs['crits'][-1]} ft**.  "
+                f"At a 10-second unbriefed delay, it needs **{rs['crits'][-1]} ft**.  "
                 f"**The brief at the runway hold-short is the cheapest altitude you'll ever buy.**"
             )
             st.caption(
@@ -3460,7 +3515,9 @@ def _show_theory_section():
     
     **CL = (nz · W) / (q · S)**
     
-    At 45° bank: nz = 1.41 → stall speed is **41% higher** than wings-level stall.
+    At 45° bank, nz = 1.41 and stall speed rises by **√nz − 1 ≈ 19%**.
+    At 60° bank, nz = 2.0 and stall speed is **41%** higher.  (Using nz
+    itself as the stall-speed multiplier is the common mix-up.)
     
     ### 3. Total Drag Increases with Lift
     

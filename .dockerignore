@@ -1,0 +1,17 @@
+.git
+**/__pycache__
+**/*.pyc
+**/*.pyo
+docs
+eaa-mcsppadden-project
+_workspace
+tests
+*.md
+data/*.csv
+deploy.ps1
+**/*.pdf
+**/*.docx
+**/*.pptx
+.pytest_cache
+.venv
+venv
