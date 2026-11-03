@@ -123,13 +123,13 @@ Physics-based "impossible turn" planning tool for the EAA McSpadden Project — 
 
 **Open physics gap (per Charlie):** altitude lost during the *turn maneuver itself* is not in any POH. Rogers (Naval Academy) has a method but needs airfoil coefficients pilots don't have. Mitigation = conservative margin (1.25–1.5×) — needs to be surfaced clearly in the UI.
 
-## 8. Reference library (in repo root)
-- `Estimating Turnback Altitude.pdf` — Prof. James F. Rogers (Naval Academy)
-- `Brent Jett 180 Back.pdf` — 1978–82 USAF Academy simulator study
-- `FAA Advisory Circular on CFI guidelines AC_61-83K.pdf`
-- `AFH Ch6 Draft Revisions v1.docx`, `AFH Ch18 Draft Revisions v1.docx` — proposed FAA Airplane Flying Handbook edits
-- `AC Draft v4.docx`, `Staff Summary v3.docx`
-- `Segmented Turnback Analysis V2.pptx`
+## 8. Reference library (docs/references/)
+- `docs/references/Estimating Turnback Altitude.pdf` — Prof. James F. Rogers (Naval Academy)
+- `docs/references/Brent Jett 180 Back.pdf` — 1978–82 USAF Academy simulator study
+- `docs/references/FAA Advisory Circular on CFI guidelines AC_61-83K.pdf`
+- `docs/references/AFH Ch6 Draft Revisions v1.docx`, `docs/references/AFH Ch18 Draft Revisions v1.docx` — proposed FAA Airplane Flying Handbook edits
+- `docs/references/AC Draft v4.docx`, `docs/references/Staff Summary v3.docx`
+- `docs/references/Segmented Turnback Analysis V2.pptx`
 - See also [eaa-mcsppadden-project/](../eaa-mcsppadden-project/) for CHARLIE-BRIEFING, THEORY-AND-REFERENCES, MATH-VALIDATION
 
 ## 9. Open decisions

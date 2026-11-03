@@ -113,7 +113,7 @@ Stall speed increases with load factor:
 
 $$V_{s,turn} = V_{s,clean} \cdot \sqrt{n_z}$$
 
-At 45° bank: $n_z = 1.41$ → stall speed is **41% higher** than wings-level stall speed. This greatly narrows the speed envelope available to the pilot.
+At 45° bank: $n_z = 1.41$ and stall speed rises by $\sqrt{n_z} - 1 \approx 19\%$, not by $n_z$ itself. At 60° bank, $n_z = 2$ and stall speed is 41% higher. This narrows the speed envelope available to the pilot.
 
 ---
 
